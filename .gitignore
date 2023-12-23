@@ -1,0 +1,8 @@
+target/
+output.txt
+.vscode
+*.dll
+*.so
+bin/
+plugin/
+libdatarace_plugin_api.h
