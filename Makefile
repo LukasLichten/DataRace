@@ -1,15 +1,13 @@
 .phony: all build plugin-api test-plugin clean test final help 
 
 all: build
-	LD_LIBRARY_PATH=./bin/ ./bin/datarace
+	LD_LIBRARY_PATH=./target/release/ ./target/release/datarace
 
 build: plugin-api
 	cargo build --release
-	cp target/release/datarace ./bin/
 
 plugin-api:
-	cd plugin_api && cargo build --release
-	cp target/release/libdatarace_plugin_api.so ./bin/
+	cd plugin_api_lib && cargo build --release
 
 test-plugin:
 	echo "TODO"

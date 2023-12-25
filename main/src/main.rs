@@ -2,5 +2,7 @@ use datarace_plugin_api_sys::run;
 
 
 pub fn main() {
-    run();
+    unsafe {
+        run();
+    }
 }
