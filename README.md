@@ -27,7 +27,7 @@ or talk to the Socket.io api instead.
 ## Building
 ### Build Requirements
 As `plugin_api_sys` makes use of bindgen for build, which requires clang.  
-More info found here: (rust-bindgen/requirements)[https://rust-lang.github.io/rust-bindgen/requirements.html]  
+More info found here: [rust-bindgen/requirements](https://rust-lang.github.io/rust-bindgen/requirements.html)  
 
 ### Plugin Build Instructions
 *TODO*
@@ -47,5 +47,5 @@ Also check `make help` for further things
 - `plugin_api_wrapper`: Provides a wrapper around the sys raw functions. Perfect for implementing plugins.
   
 Rust typically leaves libraries as code that is compiled into the final binary,
-so this way of compiling a central api library into C ABI, and then having to use a regular rust crate to link it back (and another to provide a smooth interaction) is weird.
+so this way of compiling a central api library into C ABI, and then having to use a regular rust crate to link it back (and another to provide a smooth interaction) is weird.  
 But this is all done for modularity, because having to for every new plugin installed add code and recompile just is unacceptable.
