@@ -11,7 +11,8 @@ pub fn init_fn(input: TokenStream) -> TokenStream {
     quote! {
 #[no_mangle]
 pub extern "C" fn init(handle: *mut datarace_plugin_api_wrapper::reexport::PluginHandle) -> std::os::raw::c_int {
-    #func_name(handle);
+    let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::new(handle);
+    #func_name(han);
 
     0
 }

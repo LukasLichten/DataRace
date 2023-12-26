@@ -1,10 +1,14 @@
-use datarace_plugin_api_wrapper::reexport::PluginHandle;
+use datarace_plugin_api_wrapper::wrappers::PluginHandle;
+use datarace_plugin_api_wrapper::api;
+
+// TODO: Implement get_plugin_name and free_plugin_name
 
 // This generates the extern func, while also wrapping the types
 datarace_plugin_api_wrapper::macros::init_fn!(handle_init);
 
 
-// Well, wrapping the types when I am done implementing a wrapper
-fn handle_init(handle: *mut PluginHandle) {
-    datarace_plugin_api_wrapper::log_info(handle, "Watch me!".to_string());
+// this function handles the init
+// it takes a PluginHandle
+fn handle_init(handle: PluginHandle) {
+    api::log_info(handle, "Watch me!");
 }

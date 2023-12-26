@@ -11,6 +11,7 @@ plugin-api:
 	cd plugin_api_lib && cargo build --release
 
 test-plugin:
+	mkdir -p plugins
 	cd sample_plugin && cargo build --release
 	cp target/release/libsample_plugin.so plugins/
 

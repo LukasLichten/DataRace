@@ -1,20 +1,15 @@
-use std::ffi::CString;
+/// Contains all functions of the api
+pub mod api;
 
+/// Contains wrappers around api data
+pub mod wrappers;
 
-pub fn log_info(handle: *mut reexport::PluginHandle, msg: String) {
-    let c_str = CString::new(msg).unwrap();
-    
-    unsafe {
-        let ptr = c_str.into_raw();
-        datarace_plugin_api_sys::log_info(handle, ptr);
-        drop(CString::from_raw(ptr));
-    }
-}
-
+/// Serves to reexport certain C structs for purposes such as building callback functions
 pub mod reexport {
     pub use datarace_plugin_api_sys::PluginHandle;
 }
 
+/// For building callback functions simply
 pub mod macros {
     pub use wrapper_macro::*;
 }
