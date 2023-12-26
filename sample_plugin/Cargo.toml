@@ -1,0 +1,11 @@
+[package]
+name = "sample_plugin"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate_type = ["cdylib"]
+bench = false
+
+[dependencies]
+datarace_plugin_api_wrapper = { path = "../plugin_api_wrapper" }

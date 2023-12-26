@@ -1,17 +1,10 @@
 [package]
-name = "datarace_plugin_api_sys"
+name = "datarace_plugin_api_wrapper"
 version = "0.1.0"
 edition = "2021"
-links = "datarace_plugin_api"
-
-[build-dependencies]
-built = "0.7"
-bindgen = "^0.69"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[features]
-main-entry = []
-
 [dependencies]
-libc = "0.2"
+datarace_plugin_api_sys = { path = "../plugin_api_sys" }
+wrapper_macro = { path = "./wrapper_macro" }

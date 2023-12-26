@@ -1,4 +1,4 @@
 [workspace]
-members = ["plugin_api_lib","main","plugin_api_sys"]
+members = ["plugin_api_lib","main","plugin_api_sys","plugin_api_wrapper","sample_plugin"]
 default-members = ["main"]
 resolver = "2"

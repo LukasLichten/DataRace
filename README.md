@@ -12,8 +12,7 @@ or talk to the Socket.io api instead.
   
 *TODO*:  
 - Implement basic API handles for data and messaging
-- Build wrapper
-- Implement Sample Plugin
+- Flesh out wrapper and sample plugin
 - Insure Windows Compatibility
 
 *Far future*:
@@ -45,6 +44,7 @@ Also check `make help` for further things
 - `plugin_api_lib`: Main Logic. Both serves to load the plugins, but also as API for them to link to.
 - `plugin_api_sys`: Serves to expose the (raw) function of the API while dealing with the linking.
 - `plugin_api_wrapper`: Provides a wrapper around the sys raw functions. Perfect for implementing plugins.
+- `sample_plugin`: An example plugin in rust using the wrapper
   
 Rust typically leaves libraries as code that is compiled into the final binary,
 so this way of compiling a central api library into C ABI, and then having to use a regular rust crate to link it back (and another to provide a smooth interaction) is weird.  
