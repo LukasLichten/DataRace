@@ -34,13 +34,11 @@ async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
     info!("Launing DataRace...");
     let mut plugin_set = pluginloader::load_all_plugins().await?;
     
-    // Temporary, insure runtime stays alive long enough to deliver message
-    // std::thread::sleep(std::time::Duration::from_millis(500));
-
+    // Stops the Runtime from closing when plugins are still running
     while let Some(res) = plugin_set.join_next().await {
         match res {
             Ok(_) => debug!("Some plugin finished"),
-            Err(e) => error!("One Plugin crashed {}", e)
+            Err(e) => error!("Plugin Runner Task (and it's contained Plugin) Crashed: {}", e)
         }
     }
 
@@ -60,11 +58,18 @@ macro_rules! get_handle {
     };
 }
 
-/// Logs a null terminated String
+/// Logs a null terminated String as a Info
 /// String is not deallocated, that is your job
 #[no_mangle]
 pub extern "C" fn log_info(handle: *mut PluginHandle, message: *mut c_char) {
     log_plugin_msg(handle, message, log::Level::Info);
+}
+
+/// Logs a null terminated String as a Error
+/// String is not deallocated, that is your job
+#[no_mangle]
+pub extern "C" fn log_error(handle: *mut PluginHandle, message: *mut c_char) {
+    log_plugin_msg(handle, message, log::Level::Error);
 }
 
 fn log_plugin_msg(handle: *mut PluginHandle, message: *mut c_char, log_level: log::Level) {
@@ -82,6 +87,8 @@ fn log_plugin_msg(handle: *mut PluginHandle, message: *mut c_char, log_level: lo
         return;
     };
 
+    // Even with file and or module set, it will continue not logging the name we want
+    // So this is the best bandage fix over this mess
     log::logger().log(&log::Record::builder()
         .level(log_level)
         .args(format_args!("[{}] {msg}", han.name))

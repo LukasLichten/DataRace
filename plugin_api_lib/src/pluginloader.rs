@@ -43,6 +43,7 @@ pub async fn load_all_plugins() -> Result<JoinSet<()>,Box<dyn std::error::Error>
 
 async fn run_plugin(path: PathBuf) {
     if let Ok(wrapper) = unsafe { Container::<PluginWrapper>::load(path.to_str().unwrap()) } {
+        // Preperations
         let name = if let Some(ref name_handle) = wrapper.name {
             let ptr = name_handle.get_plugin_name();
             let n = utils::get_string(ptr).clone();
@@ -62,10 +63,26 @@ async fn run_plugin(path: PathBuf) {
 
         let handle = PluginHandle { name };
         let ptr_h = Box::into_raw(Box::new(handle));
-        wrapper.func.init(ptr_h);
+
+        // Initializing
+        if wrapper.func.init(ptr_h) != 0 {
+            // None Zero Error Code, shut down
+            error!("Plugin {} failed to initialize", get_plugin_name(ptr_h));
+            return;
+        }
     } else {
-        // panic!("Test!");
+        debug!("Unable to load {} as a plugin", path.to_str().unwrap());
     }
+}
+
+fn get_plugin_name(ptr: *mut PluginHandle) -> String {
+    if let Some(handle) = unsafe {
+        ptr.as_ref()
+    } {
+        return handle.name.clone();
+    }
+
+    "unknown".to_string()
 }
 
 #[derive(WrapperMultiApi)]
