@@ -1,4 +1,4 @@
-use std::{path::PathBuf, fs};
+use std::{path::PathBuf, fs, sync::Arc};
 
 use dlopen2::wrapper::{WrapperApi, Container, WrapperMultiApi};
 use log::{error, info, debug};
@@ -100,4 +100,17 @@ struct PluginNameWrapper {
 #[derive(WrapperApi)]
 struct PluginFuncWrapper {
     init: extern "C" fn(handle: *mut PluginHandle) -> libc::c_int
+}
+
+pub(crate) struct Message {
+
+}
+
+pub(crate) enum Value {
+    None,
+    Int(i64),
+    Float(u64),
+    Bool(bool),
+    Str(Arc<String>),
+    Dur(u64)
 }

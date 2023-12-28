@@ -6,7 +6,9 @@ mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
+#[allow(unused_variables, dead_code)]
 mod datastore;
+
 mod pluginloader;
 pub(crate) mod utils;
 
@@ -48,6 +50,26 @@ async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
 pub struct PluginHandle {
     name: String,
     // rec: kanal::Receiver<u8>
+}
+
+/// Return codes from operations like create_property, etc.
+#[repr(C)]
+pub enum DataStoreReturnCode {
+    Ok = 0,
+    NotAuthenticated = 1,
+    AlreadyExists = 2,
+    DoesNotExist = 3,
+    OutdatedPropertyHandle = 4,
+    TypeMissmatch = 5,
+
+}
+
+/// A Handle that serves for easy access to getting and updating properties
+/// These handles can be from time to time invalidated if a property seizes to exist
+///
+pub struct PropertyHandle {
+    index: usize,
+    hash: u64
 }
 
 macro_rules! get_handle {
