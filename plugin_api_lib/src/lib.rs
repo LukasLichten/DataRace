@@ -34,7 +34,9 @@ pub extern "C" fn run() {
 
 async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
     info!("Launing DataRace...");
-    let mut plugin_set = pluginloader::load_all_plugins().await?;
+    let datastore: &'static datastore::DataStore  = Box::leak(Box::new(datastore::DataStore::new()));
+
+    let mut plugin_set = pluginloader::load_all_plugins(datastore).await?;
     
     // Stops the Runtime from closing when plugins are still running
     while let Some(res) = plugin_set.join_next().await {
@@ -49,11 +51,13 @@ async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
 
 pub struct PluginHandle {
     name: String,
-    // rec: kanal::Receiver<u8>
+    datastore: &'static datastore::DataStore,
+    token: datastore::Token
 }
 
 /// Return codes from operations like create_property, etc.
-#[repr(C)]
+#[derive(PartialEq)]
+#[repr(u8)]
 pub enum DataStoreReturnCode {
     Ok = 0,
     NotAuthenticated = 1,
@@ -66,10 +70,43 @@ pub enum DataStoreReturnCode {
 
 /// A Handle that serves for easy access to getting and updating properties
 /// These handles can be from time to time invalidated if a property seizes to exist
-///
+#[repr(C)]
 pub struct PropertyHandle {
     index: usize,
     hash: u64
+}
+
+/// The Type and Value of a Property
+#[repr(C)]
+pub struct Property {
+    sort: PropertyType,
+    value: PropertyValue
+}
+
+/// The type of this Property
+#[repr(u8)]
+pub enum PropertyType {
+    None = 0,
+    Int = 1,
+    Float = 2,
+    Boolean = 3,
+    Str = 4,
+    Duration = 5
+}
+
+/// This is a union, only one type is actually contained (read the PropertyType value first)
+/// integer is a 64bit signed integer
+/// decimal is a double precision (64bit) floating point number
+/// boolean is a Boolean
+/// str is a pointer to a null terminating String
+/// dur is a Duration in micro seconds (1s = 1,000millis = 1,000,000 micros), signed
+#[repr(C)]
+pub union PropertyValue {
+    integer: i64,
+    decimal: f64,
+    boolean: bool,
+    str: *mut c_char,
+    dur: i64
 }
 
 macro_rules! get_handle {
@@ -78,6 +115,11 @@ macro_rules! get_handle {
             $ptr.as_ref()
         }
     };
+}
+
+#[no_mangle]
+pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, value: Property) {
+    
 }
 
 /// Logs a null terminated String as a Info

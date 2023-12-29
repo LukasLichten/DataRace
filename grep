@@ -1,0 +1,3 @@
+mkdir -p plugins
+cd sample_plugin && cargo build --release
+cp target/release/libsample_plugin.so plugins/

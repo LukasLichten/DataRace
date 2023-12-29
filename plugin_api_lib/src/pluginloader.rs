@@ -5,9 +5,9 @@ use log::{error, info, debug};
 
 use tokio::task::JoinSet;
 
-use crate::{PluginHandle, utils};
+use crate::{PluginHandle, utils, datastore::DataStore, DataStoreReturnCode};
 
-pub async fn load_all_plugins() -> Result<JoinSet<()>,Box<dyn std::error::Error>> {
+pub(crate) async fn load_all_plugins(datastore: &'static DataStore) -> Result<JoinSet<()>,Box<dyn std::error::Error>> {
     let plugin_folder = PathBuf::from("./plugins/");
 
     if !plugin_folder.is_dir() {
@@ -31,7 +31,7 @@ pub async fn load_all_plugins() -> Result<JoinSet<()>,Box<dyn std::error::Error>
         while let Some(Ok(item)) = res.next() {
             debug!("Found {} in plugin folder", item.path().to_str().unwrap());
             if item.path().extension().unwrap().to_str().unwrap() == ending {
-                plugin_task_handles.spawn(run_plugin(item.path()));
+                plugin_task_handles.spawn(run_plugin(item.path(), datastore));
             }
         }
 
@@ -41,7 +41,7 @@ pub async fn load_all_plugins() -> Result<JoinSet<()>,Box<dyn std::error::Error>
     Ok(plugin_task_handles)
 }
 
-async fn run_plugin(path: PathBuf) {
+async fn run_plugin(path: PathBuf, datastore: &'static DataStore) {
     if let Ok(wrapper) = unsafe { Container::<PluginWrapper>::load(path.to_str().unwrap()) } {
         // Preperations
         let name = if let Some(ref name_handle) = wrapper.name {
@@ -61,23 +61,62 @@ async fn run_plugin(path: PathBuf) {
             path.file_stem().unwrap().to_str().unwrap().to_string()
         };
 
-        let handle = PluginHandle { name };
-        let ptr_h = Box::into_raw(Box::new(handle));
+        let (token, reciever) = if let Some(v) = datastore.create_plugin(name.clone()).await {
+            v
+        } else {
+            error!("Unable to register Plugin {}, name collision", name);
+            return;
+        };
+
+        let handle = PluginHandle { name, datastore, token: token.clone() };
+        let ptr_h = PtrWrapper { ptr: Box::into_raw(Box::new(handle)) };
 
         // Initializing
-        if wrapper.func.init(ptr_h) != 0 {
+        if wrapper.func.init(ptr_h.ptr) != 0 {
             // None Zero Error Code, shut down
-            error!("Plugin {} failed to initialize", get_plugin_name(ptr_h));
+            error!("Plugin {} failed to initialize", get_plugin_name(&ptr_h));
             return;
         }
+
+        
+
+
+        // End of life
+        // let t = unsafe {
+        //     Box::from_raw(ptr_h)
+        //     
+        // };
+
+        if DataStoreReturnCode::Ok != datastore.delete_plugin(&token).await {
+            error!("Plugin {} failed to shutdown properly", get_plugin_name(&ptr_h));
+        } else {
+            info!("Plugin {} stopped", get_plugin_name(&ptr_h));
+        }
+
+
+        // Should we deallocate the PluginHandle?
+        // Well, the Plugin should have stopped any threads it has, all calls it does have ceased,
+        // so we should be in the clear
+        unsafe {
+            drop(Box::from_raw(ptr_h.ptr));
+        }
+
+        
     } else {
         debug!("Unable to load {} as a plugin", path.to_str().unwrap());
     }
 }
 
-fn get_plugin_name(ptr: *mut PluginHandle) -> String {
+// We have to do this, as you can otherwise not await anything
+struct PtrWrapper {
+    ptr: *mut PluginHandle
+}
+
+unsafe impl Send for PtrWrapper { }
+
+fn get_plugin_name(ptr: &PtrWrapper) -> String {
     if let Some(handle) = unsafe {
-        ptr.as_ref()
+        ptr.ptr.as_ref()
     } {
         return handle.name.clone();
     }
@@ -112,5 +151,7 @@ pub(crate) enum Value {
     Float(u64),
     Bool(bool),
     Str(Arc<String>),
-    Dur(u64)
+    Dur(i64)
 }
+
+

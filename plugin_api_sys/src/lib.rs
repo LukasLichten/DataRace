@@ -1,4 +1,5 @@
-#[allow(dead_code)]
+// A lot of this is due to importing large sets of C standard lib
+#[allow(dead_code,non_upper_case_globals,non_camel_case_types,improper_ctypes)]
 mod bindings {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }

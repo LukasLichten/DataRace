@@ -27,6 +27,11 @@ impl DataStore {
     }
 
     pub async fn create_property(&self, token: &Token, name: String, value: Value) -> Result<PropertyHandle,DataStoreReturnCode> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(DataStoreReturnCode::AlreadyExists);
+        }
+
         if let Some(plugin_name) = self.get_plugin_name_from_token(token).await {
             let (mut w_map, mut w_list) = (self.property_map.write().await, self.propertys.write().await);
             
@@ -177,6 +182,11 @@ impl DataStore {
     }
 
     pub(crate) async fn get_property_handle(&self, name: String) -> Result<PropertyHandle, DataStoreReturnCode> {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return Err(DataStoreReturnCode::DoesNotExist);
+        }
+
         let (r_map, r_list) = (self.property_map.read().await, self.propertys.read().await);
         
         if let Some(address) = r_map.get(&name) {
@@ -211,6 +221,10 @@ impl DataStore {
     }
 
     pub(crate) async fn create_plugin(&self, name: String) -> Option<(Token, Receiver<Message>)> {
+        if name.trim().is_empty() {
+            return None;
+        }
+
         let mut w_plugin = self.plugins.write().await;
         
         let mut token = Token::default();
@@ -233,6 +247,30 @@ impl DataStore {
 
         Some((token, rx))
     }
+
+    pub(crate) async fn delete_plugin(&self, token: &Token) -> DataStoreReturnCode {
+        let mut w_plugin = self.plugins.write().await;
+
+        for p in w_plugin.iter_mut() {
+            if &p.token == token {
+                // We can't remove a plugin as it would change the index of items
+                //
+                p.name = String::new();
+                p.token = Token::default();
+                
+                //Can't unset this, but the channel should be closed automatically anyway
+                //p.channel = None
+                
+                // We should also remove the subscription of every property, but that is way way to
+                // expensive, and the delete_plugin should really only be called during crashes and shutdown
+                // At least during shutdown this would be a massive waste of time
+                
+                return DataStoreReturnCode::Ok;
+            }
+        }
+
+        DataStoreReturnCode::DoesNotExist
+    } 
     
     /// Be careful, this can deadlock any caller who has taken a lock on plugins
     async fn get_plugin_name_from_token(&self, token: &Token) -> Option<String> {
@@ -264,7 +302,9 @@ pub(crate) struct Property {
     value: ValueContainer
 }
 
-enum ValueContainer {
+unsafe impl Send for Property {}
+
+pub(crate) enum ValueContainer {
     None,
     Int(AtomicI64),
     Float(AtomicU64),
@@ -292,6 +332,8 @@ pub(crate) struct Plugin {
     token: Token,
     channel: Sender<Message>
 }
+
+unsafe impl Send for Plugin {}
 
 #[derive(Debug,Clone,PartialEq)]
 pub(crate) struct Token {
