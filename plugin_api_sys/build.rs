@@ -101,13 +101,35 @@ fn find_and_bind_lib(mut try_env: bool) -> PathBuf {
             println!("cargo:rerun-if-changed={}",test.to_str().unwrap());
             test
         }
+    } else if cfg!(target_os = "windows") {
+        let test = bin.join("datarace_plugin_api.dll.lib");
+        if !test.exists() {
+            if try_env {
+                // We failed to find the library where specified, but we can still retry default
+                println!("cargo:warning=Unable find library at {}, attempting at default...", bin.to_str().unwrap());
+                return find_and_bind_lib(false);
+            }
+
+            panic!("Unable to find datarace_plugin_api.dll.lib within output directory! Make sure to build plugin_api_lib first (and in the same release mode)!");
+        } else {
+            // Rerun if the library has been updated
+            // Also 
+            println!("cargo:rerun-if-changed={}",test.to_str().unwrap());
+            bin.join("datarace_plugin_api.dll")
+        }
     } else {
         println!("cargo:warning=Unable to verify if Library is present... Unknown Plattform");
-        bin.join("datarace_plugin_api.dll")
+        bin.join("datarace_plugin_api.dylib")
     };
 
     println!("cargo:rustc-link-search={}",bin.to_str().unwrap());
-    println!("cargo:rustc-link-lib=dylib=datarace_plugin_api");
+    if cfg!(target_os = "windows") {
+        // Windows linker wants the .lib, rust builds *.dll, *.dll.lib, etc.
+        // But if we just give it the normal name it will look for *.lib, so this is the work around for it
+        println!("cargo:rustc-link-lib=dylib=datarace_plugin_api.dll");
+    } else {
+        println!("cargo:rustc-link-lib=dylib=datarace_plugin_api");
+    }
 
     lib
 }

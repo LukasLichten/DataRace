@@ -8,12 +8,13 @@ or talk to the Socket.io api instead.
 **And hopefully not so fast to "Data Race" itself*
 
 ## Features
-**Unusable**, nothing is implemented yet  
+**Unusable**, basically nothing is implemented yet:  
+- Linux and Windows Compat
+- Loading of Plugins out of the plugins folder
   
 *TODO*:  
 - Implement basic API handles for data and messaging
 - Flesh out wrapper and sample plugin
-- Insure Windows Compatibility
 
 *Far future*:
 - Implement socket.io server
@@ -32,12 +33,19 @@ More info found here: [rust-bindgen/requirements](https://rust-lang.github.io/ru
 *TODO*
 
 ### Project Build Instrutions
+#### Linux:
 To build the plugin api and the executable run
 ```
 make
 ```
 
 Also check `make help` for further things  
+
+#### Windows:
+Use this powershell script:
+```
+.\wmake.ps1
+```
 
 ### Project Structure
 - `main`: Houses the executable, which only serves as a launcher.
