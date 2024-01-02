@@ -1,13 +1,14 @@
-use std::sync::{atomic::{AtomicU64, AtomicI64, AtomicBool}, Arc};
+use std::sync::{atomic::{AtomicU64, AtomicI64, AtomicBool, Ordering}, Arc};
 use std::hash::{Hasher,Hash};
 
 use fnv::{FnvHashMap,FnvHasher};
+use log::debug;
 use tokio::sync::{RwLock, Mutex};
 use kanal::{Sender, Receiver};
 use rand::{RngCore, SeedableRng};
 use rand_hc::Hc128Rng;
 
-use crate::{pluginloader::{Message, Value}, DataStoreReturnCode, PropertyHandle};
+use crate::{pluginloader::Message, DataStoreReturnCode, PropertyHandle, utils::Value};
 
 /// This is our centralized State
 pub(crate) struct DataStore {
@@ -31,6 +32,7 @@ impl DataStore {
         if name.is_empty() {
             return Err(DataStoreReturnCode::AlreadyExists);
         }
+        debug!("Entered create property!");
 
         if let Some(plugin_name) = self.get_plugin_name_from_token(token).await {
             let (mut w_map, mut w_list) = (self.property_map.write().await, self.propertys.write().await);
@@ -47,7 +49,7 @@ impl DataStore {
                         // listeners
                         
                         item.plugin_token = token.clone();
-                        item.value = ValueContainer::new(&value);
+                        item.value = ValueContainer::new(value.clone());
 
                         drop(w_map);
                         // We can't drop w_list, it would mean cloning all listeners
@@ -89,7 +91,7 @@ impl DataStore {
                 name_hash, 
                 plugin_token: token.clone(), 
                 listeners: vec![],
-                value: ValueContainer::new(&value)
+                value: ValueContainer::new(value)
             });
 
             let index = w_list.len() - 1;
@@ -260,6 +262,28 @@ impl DataStore {
                 
                 //Can't unset this, but the channel should be closed automatically anyway
                 //p.channel = None
+
+                // Need to delete all properties tied to this plugins
+                let (mut w_map, mut w_list) = (self.property_map.write().await, self.propertys.write().await);
+            
+                for index in 0..w_list.len() {
+                    let item = &w_list[index];
+                    if &item.plugin_token == token {
+                        debug!("Cleaning up property {} with value {}", &item.name, if let ValueContainer::Int(i) = &item.value { i.load(Ordering::Acquire).to_string() } else { "Error".to_string() });
+                        // We have to delete this plugin
+                        w_map.remove(&item.name);
+
+                        w_list[index].name = String::new();
+                        w_list[index].name_hash = 0;
+                        w_list[index].plugin_token = Token::default();
+                        w_list[index].value = ValueContainer::None;
+
+                        for p in w_list[index].listeners.iter() {
+                            let _ = p.as_async().send(Message {} ).await;
+                        }
+                        w_list[index].listeners.clear();
+                    }
+                }
                 
                 // We should also remove the subscription of every property, but that is way way to
                 // expensive, and the delete_plugin should really only be called during crashes and shutdown
@@ -304,18 +328,26 @@ pub(crate) struct Property {
 
 unsafe impl Send for Property {}
 
+#[derive(Debug)]
 pub(crate) enum ValueContainer {
     None,
     Int(AtomicI64),
     Float(AtomicU64),
     Bool(AtomicBool),
     Str(Mutex<Arc<String>>),
-    Dur(AtomicU64)
+    Dur(AtomicI64)
 }
 
 impl ValueContainer {
-    fn new(val: &Value) -> ValueContainer {
-        todo!()
+    fn new(val: Value) -> ValueContainer {
+        match val {
+            Value::None => ValueContainer::None,
+            Value::Int(i) => ValueContainer::Int(AtomicI64::new(i)),
+            Value::Float(f) => ValueContainer::Float(AtomicU64::new(f)),
+            Value::Bool(b) => ValueContainer::Bool(AtomicBool::new(b)),
+            Value::Str(s) => ValueContainer::Str(Mutex::new(s)),
+            Value::Dur(d) => ValueContainer::Dur(AtomicI64::new(d))
+        }
     }
 
     fn update(&self, val: Value) -> Option<Value> {

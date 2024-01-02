@@ -13,3 +13,19 @@ pub mod reexport {
 pub mod macros {
     pub use wrapper_macro::*;
 }
+
+use std::ffi::CStr;
+
+/// Simple way to aquire a String for a null terminating c_char ptr
+/// We do not optain ownership of the String, the owner has to deallocate it
+pub fn get_string(ptr: *mut std::os::raw::c_char) -> Option<String> {
+    Some(unsafe {
+        let c_str = CStr::from_ptr(ptr);
+
+        if let Ok(it) = c_str.to_str() {
+            it
+        } else {
+            return None;
+        }
+    }.to_string())
+}

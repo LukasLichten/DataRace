@@ -1,4 +1,4 @@
-use std::{path::PathBuf, fs, sync::Arc};
+use std::{path::PathBuf, fs};
 
 use dlopen2::wrapper::{WrapperApi, Container, WrapperMultiApi};
 use log::{error, info, debug};
@@ -145,13 +145,5 @@ pub(crate) struct Message {
 
 }
 
-pub(crate) enum Value {
-    None,
-    Int(i64),
-    Float(u64),
-    Bool(bool),
-    Str(Arc<String>),
-    Dur(i64)
-}
 
 

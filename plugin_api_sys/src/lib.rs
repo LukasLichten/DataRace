@@ -7,6 +7,24 @@ mod bindings {
 #[cfg(feature = "main-entry")]
 pub use bindings::run;
 
+//Functions
+// Log Functions
+pub use bindings::{log_info, log_error};
+
+// Property Functions
+pub use bindings::create_property;
+
+
+//Data
+// Enums
+pub use bindings::{DataStoreReturnCode, DataStoreReturnCode_Ok, DataStoreReturnCode_NotAuthenticated, DataStoreReturnCode_AlreadyExists, DataStoreReturnCode_DoesNotExist, DataStoreReturnCode_OutdatedPropertyHandle, DataStoreReturnCode_TypeMissmatch, DataStoreReturnCode_DataCorrupted};
+pub use bindings::{PropertyType, PropertyType_None, PropertyType_Int, PropertyType_Float, PropertyType_Boolean, PropertyType_Str, PropertyType_Duration};
+
+// Property
+pub use bindings::{Property, PropertyValue, PropertyHandle};
+
+// Plugins
 pub use bindings::PluginHandle;
 
-pub use bindings::{log_info, log_error};
+// ReturnValues
+pub use bindings::ReturnValue_PropertyHandle;

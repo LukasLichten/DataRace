@@ -1,4 +1,3 @@
-use libc::c_char;
 use log::{info, error, debug};
 use tokio::runtime::Builder;
 
@@ -27,9 +26,12 @@ pub extern "C" fn run() {
         } else {
             info!("Shutting down...");
         }
+        rt.shutdown_timeout(std::time::Duration::from_secs(2));
+        info!("Done");
     } else {
         error!("Unable to launch tokio async runtime, aborting launch")
     }
+
 }
 
 async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
@@ -49,112 +51,9 @@ async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
     Ok(())
 }
 
-pub struct PluginHandle {
-    name: String,
-    datastore: &'static datastore::DataStore,
-    token: datastore::Token
-}
+mod api_func;
+mod api_types;
+pub use api_func::*;
+pub use api_types::*;
 
-/// Return codes from operations like create_property, etc.
-#[derive(PartialEq)]
-#[repr(u8)]
-pub enum DataStoreReturnCode {
-    Ok = 0,
-    NotAuthenticated = 1,
-    AlreadyExists = 2,
-    DoesNotExist = 3,
-    OutdatedPropertyHandle = 4,
-    TypeMissmatch = 5,
 
-}
-
-/// A Handle that serves for easy access to getting and updating properties
-/// These handles can be from time to time invalidated if a property seizes to exist
-#[repr(C)]
-pub struct PropertyHandle {
-    index: usize,
-    hash: u64
-}
-
-/// The Type and Value of a Property
-#[repr(C)]
-pub struct Property {
-    sort: PropertyType,
-    value: PropertyValue
-}
-
-/// The type of this Property
-#[repr(u8)]
-pub enum PropertyType {
-    None = 0,
-    Int = 1,
-    Float = 2,
-    Boolean = 3,
-    Str = 4,
-    Duration = 5
-}
-
-/// This is a union, only one type is actually contained (read the PropertyType value first)
-/// integer is a 64bit signed integer
-/// decimal is a double precision (64bit) floating point number
-/// boolean is a Boolean
-/// str is a pointer to a null terminating String
-/// dur is a Duration in micro seconds (1s = 1,000millis = 1,000,000 micros), signed
-#[repr(C)]
-pub union PropertyValue {
-    integer: i64,
-    decimal: f64,
-    boolean: bool,
-    str: *mut c_char,
-    dur: i64
-}
-
-macro_rules! get_handle {
-    ($ptr:ident) => {
-        unsafe {
-            $ptr.as_ref()
-        }
-    };
-}
-
-#[no_mangle]
-pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, value: Property) {
-    
-}
-
-/// Logs a null terminated String as a Info
-/// String is not deallocated, that is your job
-#[no_mangle]
-pub extern "C" fn log_info(handle: *mut PluginHandle, message: *mut c_char) {
-    log_plugin_msg(handle, message, log::Level::Info);
-}
-
-/// Logs a null terminated String as a Error
-/// String is not deallocated, that is your job
-#[no_mangle]
-pub extern "C" fn log_error(handle: *mut PluginHandle, message: *mut c_char) {
-    log_plugin_msg(handle, message, log::Level::Error);
-}
-
-fn log_plugin_msg(handle: *mut PluginHandle, message: *mut c_char, log_level: log::Level) {
-    let han = if let Some(handle) = get_handle!(handle) {
-        handle
-    } else {
-        error!("Plugin Handle corrupted");
-        return;
-    };
-
-    let msg = if let Some(message) = utils::get_string(message) {
-        message
-    } else {
-        error!("Message was corrupted");
-        return;
-    };
-
-    // Even with file and or module set, it will continue not logging the name we want
-    // So this is the best bandage fix over this mess
-    log::logger().log(&log::Record::builder()
-        .level(log_level)
-        .args(format_args!("[{}] {msg}", han.name))
-        .build());
-}
