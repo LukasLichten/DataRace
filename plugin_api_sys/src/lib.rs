@@ -12,7 +12,7 @@ pub use bindings::run;
 pub use bindings::{log_info, log_error};
 
 // Property Functions
-pub use bindings::create_property;
+pub use bindings::{create_property, update_property, get_property_value, get_property_handle, delete_property};
 
 
 //Data
@@ -27,4 +27,4 @@ pub use bindings::{Property, PropertyValue, PropertyHandle};
 pub use bindings::PluginHandle;
 
 // ReturnValues
-pub use bindings::ReturnValue_PropertyHandle;
+pub use bindings::{ReturnValue_PropertyHandle, ReturnValue_Property};

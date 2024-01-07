@@ -60,3 +60,62 @@ pub fn create_property <S: ToString>(handle: &PluginHandle, name: S, init: Prope
 
     Ok(PropertyHandle::new(res.value))
 }
+
+/// Updates the value of a property
+/// 
+/// You can only update propertys that were created with this handle
+/// You can only use values of the same type as the inital type, call change_property_type to cahnge this
+pub fn update_property(handle: &PluginHandle, prop_handle: &PropertyHandle, value: Property) -> DataStoreReturnCode {
+    let res = unsafe {
+        sys::update_property(handle.get_ptr(), prop_handle.get_inner(), value.to_c())
+    };
+
+    DataStoreReturnCode::from(res)
+}
+
+/// Retrieves the value for a certain PropertyHandle
+/// 
+/// It is better to subscribe to a property, as this function incurrs a certain overhead (especially for string).
+/// But if you rarely need this value, then the overhead from polling this value might be worth it
+pub fn get_property_value(handle: &PluginHandle, prop_handle: &PropertyHandle) -> Result<Property, DataStoreReturnCode> {
+    let res = unsafe {
+        sys::get_property_value(handle.get_ptr(), prop_handle.get_inner())
+    };
+
+    let code = DataStoreReturnCode::from(res.code);
+    if code != DataStoreReturnCode::Ok {
+        return Err(code);
+    }
+
+    Ok(Property::new(res.value))
+}
+
+/// Retrieves the PropertyHandle used for reading and updating values
+/// 
+/// It is highly adviced you store this value, as retrieving a new handle for every api call is very expensive
+/// PropertyHandles can become invalid (if for example a property gets renamed or deleted), then a new one has to be requested
+pub fn get_property_handle<S: ToString>(handle: &PluginHandle, name: S) -> Result<PropertyHandle, DataStoreReturnCode> {
+    let name_ptr = create_cstring!(name);
+
+    let res = unsafe {
+        sys::get_property_handle(handle.get_ptr(), name_ptr)
+    };
+    drop_cstring!(name_ptr);
+
+    
+    let code = DataStoreReturnCode::from(res.code);
+    if code != DataStoreReturnCode::Ok {
+        return Err(code);
+    }
+
+    Ok(PropertyHandle::new(res.value))
+}
+
+/// Deletes this property
+pub fn delete_property(handle: &PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
+    let res = unsafe {
+        sys::delete_property(handle.get_ptr(), prop_handle.get_inner())
+    };
+
+    DataStoreReturnCode::from(res)
+}

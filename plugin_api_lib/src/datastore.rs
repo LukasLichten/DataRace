@@ -32,7 +32,6 @@ impl DataStore {
         if name.is_empty() {
             return Err(DataStoreReturnCode::AlreadyExists);
         }
-        debug!("Entered create property!");
 
         if let Some(plugin_name) = self.get_plugin_name_from_token(token).await {
             let (mut w_map, mut w_list) = (self.property_map.write().await, self.propertys.write().await);
@@ -117,7 +116,7 @@ impl DataStore {
                 return DataStoreReturnCode::NotAuthenticated;
             }
 
-            if let Some(value) = item.value.update(value) {
+            if let Some(value) = item.value.update(value).await {
                 
                 for p in item.listeners.iter() {
                     let _ = p.as_async().send(Message {} ).await;
@@ -216,7 +215,7 @@ impl DataStore {
                 return Err(DataStoreReturnCode::OutdatedPropertyHandle);
             }
             
-            Ok(item.value.read())
+            Ok(item.value.read().await)
         } else {
             Err(DataStoreReturnCode::OutdatedPropertyHandle)
         }
@@ -350,12 +349,47 @@ impl ValueContainer {
         }
     }
 
-    fn update(&self, val: Value) -> Option<Value> {
-        todo!()
+    async fn update(&self, val: Value) -> Option<Value> {
+        Some(match (val,self) {
+            (Value::None, ValueContainer::None) => Value::None,
+            (Value::Int(i), ValueContainer::Int(at)) => {
+                at.store(i, Ordering::Release);
+                Value::Int(i)
+            },
+            (Value::Float(f), ValueContainer::Float(at)) => {
+                at.store(f, Ordering::Release);
+                Value::Float(f)
+            },
+            (Value::Bool(b), ValueContainer::Bool(at)) => {
+                at.store(b, Ordering::Release);
+                Value::Bool(b)
+            },
+            (Value::Str(s),ValueContainer::Str(mu)) => {
+                let mut res = mu.lock().await;
+                *res = s.clone();
+                Value::Str(s)
+            },
+            (Value::Dur(d), ValueContainer::Dur(at)) => {
+                at.store(d, Ordering::Release);
+                Value::Dur(d)
+            },
+            _ => return None,
+        })
     }
 
-    fn read(&self) -> Value {
-        todo!()
+    async fn read(&self) -> Value {
+        match self {
+            ValueContainer::None => Value::None,
+            ValueContainer::Int(at) => Value::Int(at.load(Ordering::Acquire)),
+            ValueContainer::Float(at) => Value::Float(at.load(Ordering::Acquire)),
+            ValueContainer::Bool(at) => Value::Bool(at.load(Ordering::Acquire)),
+            ValueContainer::Str(mu) => { 
+                let res = mu.lock().await;
+                let a = res.clone();
+                Value::Str(a)
+            },
+            ValueContainer::Dur(at) => Value::Dur(at.load(Ordering::Acquire)),
+        }
     }
 }
 

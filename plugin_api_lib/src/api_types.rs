@@ -1,3 +1,5 @@
+use std::ffi::CString;
+
 use libc::c_char;
 use crate::utils;
 
@@ -97,5 +99,27 @@ impl Default for PropertyHandle {
 impl Default for Property {
     fn default() -> Self {
         Property { sort: PropertyType::None, value: PropertyValue { integer: 0 } }
+    }
+}
+
+impl TryFrom<crate::utils::Value> for Property {
+    type Error = DataStoreReturnCode;
+
+    fn try_from(value: utils::Value) -> Result<Self, Self::Error> {
+        Ok(match value {
+            utils::Value::None => Property::default(),
+            utils::Value::Int(i) => Property { sort: PropertyType::Int, value: PropertyValue { integer: i } },
+            utils::Value::Float(f) => Property { sort: PropertyType::Float, value: PropertyValue { decimal: f64::from_be_bytes(f.to_be_bytes()) } },
+            utils::Value::Bool(b) => Property { sort: PropertyType::Boolean, value: PropertyValue { boolean: b } },
+            utils::Value::Str(s) => {
+                if let Ok(val) = CString::new(s.as_str().to_string()) {
+                    let ptr = val.into_raw();
+                    Property { sort: PropertyType::Str, value: PropertyValue { str: ptr } }
+                } else {
+                    return Err(DataStoreReturnCode::DataCorrupted);
+                }
+            },
+            utils::Value::Dur(d) => Property { sort: PropertyType::Duration, value: PropertyValue { dur: d }}
+        })
     }
 }

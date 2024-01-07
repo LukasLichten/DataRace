@@ -35,7 +35,7 @@ pub extern "C" fn run() {
 }
 
 async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
-    info!("Launing DataRace...");
+    info!("Launching DataRace...");
     let datastore: &'static datastore::DataStore  = Box::leak(Box::new(datastore::DataStore::new()));
 
     let mut plugin_set = pluginloader::load_all_plugins(datastore).await?;
