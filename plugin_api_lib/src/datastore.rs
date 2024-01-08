@@ -132,20 +132,101 @@ impl DataStore {
         }
     }
 
+#[allow(unused_variables, dead_code)]
     pub(crate) async fn change_property_name(&self, token: &Token, handle: &PropertyHandle, name: String) -> Result<PropertyHandle, DataStoreReturnCode> {
+        let (mut w_list, mut w_map) = (self.propertys.write().await, self.property_map.write().await);
         todo!()
     }
 
+#[allow(unused_variables, dead_code)]
     pub(crate) async fn change_property_type(&self, token: &Token, handle: &PropertyHandle, value: Value) -> DataStoreReturnCode {
         todo!();
     }
 
     pub(crate) async fn subscribe_to_property(&self, token: &Token, handle: &PropertyHandle) -> DataStoreReturnCode {
-        todo!();
+        let r_list = self.propertys.read().await;
+
+        if let Some(item) = r_list.get(handle.index.clone()) {
+            if item.name_hash != handle.hash {
+                return DataStoreReturnCode::OutdatedPropertyHandle;
+            }
+            
+            if item.value.is_atomic() {
+                // We are sending a message into the pluginmanager to poll this property, as this
+                // is more performant
+                
+                let r_plugins = self.plugins.read().await;
+
+                for p in r_plugins.iter() {
+                    if &p.token == token {
+                        if p.channel.as_async().send(Message { }).await.is_ok() {
+                            return DataStoreReturnCode::Ok
+                        } else {
+                            // We don't have a special case for when this happens
+                            // Should happen only when the channel is closed, so after shutdown but
+                            // some thread might not be shut down yet
+                            return DataStoreReturnCode::NotAuthenticated;
+                        }
+                    }
+                }
+
+                DataStoreReturnCode::NotAuthenticated
+            } else {
+                // We will add this as a listener
+                
+                // We need write access on the properties list, so we need to drop these first
+                drop(r_list);
+                let mut w_list = self.propertys.write().await;
+
+                if let Some(mut item) = w_list.get_mut(handle.index.clone()) {
+                    // We have to verify it didn't change between the drop and write aquire
+                    if item.name_hash != handle.hash {
+                        return DataStoreReturnCode::OutdatedPropertyHandle;
+                    }
+
+                    let r_plugins = self.plugins.read().await;
+
+                    for p in r_plugins.iter() {
+                        if &p.token == token {
+                            item.listeners.push(p.channel.clone());
+                            return DataStoreReturnCode::Ok
+                        }
+                    }
+
+                    DataStoreReturnCode::NotAuthenticated
+                } else {
+                    DataStoreReturnCode::OutdatedPropertyHandle
+                }
+            }
+        } else {
+            DataStoreReturnCode::OutdatedPropertyHandle
+        }
     }
 
+#[allow(unused_variables, dead_code)]
     pub(crate) async fn unsubscribe_from_property(&self, token: &Token, handle: &PropertyHandle) -> DataStoreReturnCode {
-        todo!();
+        let mut w_list = self.propertys.write().await;
+
+        if let Some(mut item) = w_list.get_mut(handle.index.clone()) {
+            if item.name_hash != handle.hash {
+                return DataStoreReturnCode::OutdatedPropertyHandle;
+            }
+
+            let r_plugins = self.plugins.read().await;
+
+            for p in r_plugins.iter() {
+                if &p.token == token {
+                    let _ = p.channel.as_async().send(Message {}).await;
+                    
+                    // item.listeners.retain(|l| l != &p.channel);
+                    return DataStoreReturnCode::Ok;
+                }
+            }
+
+            return DataStoreReturnCode::NotAuthenticated;
+        }
+
+        DataStoreReturnCode::OutdatedPropertyHandle
     }
 
     pub(crate) async fn delete_property(&self, token: &Token, handle: &PropertyHandle) -> DataStoreReturnCode {
@@ -221,7 +302,7 @@ impl DataStore {
         }
     }
 
-    pub(crate) async fn create_plugin(&self, name: String) -> Option<(Token, Receiver<Message>)> {
+    pub(crate) async fn create_plugin(&self, name: String) -> Option<(Token, Receiver<Message>, Sender<Message>)> {
         if name.trim().is_empty() {
             return None;
         }
@@ -244,9 +325,9 @@ impl DataStore {
 
         let (sx,rx) = kanal::unbounded();
         
-        w_plugin.push(Plugin { name, token: token.clone(), channel: sx });
+        w_plugin.push(Plugin { name, token: token.clone(), channel: sx.clone() });
 
-        Some((token, rx))
+        Some((token, rx, sx))
     }
 
     pub(crate) async fn delete_plugin(&self, token: &Token) -> DataStoreReturnCode {
@@ -255,7 +336,6 @@ impl DataStore {
         for p in w_plugin.iter_mut() {
             if &p.token == token {
                 // We can't remove a plugin as it would change the index of items
-                //
                 p.name = String::new();
                 p.token = Token::default();
                 
@@ -390,6 +470,14 @@ impl ValueContainer {
             },
             ValueContainer::Dur(at) => Value::Dur(at.load(Ordering::Acquire)),
         }
+    }
+
+    fn is_atomic(&self) -> bool {
+        if let ValueContainer::Str(_) = self {
+            return false;
+        }
+
+        true
     }
 }
 

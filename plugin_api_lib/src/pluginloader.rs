@@ -61,7 +61,7 @@ async fn run_plugin(path: PathBuf, datastore: &'static DataStore) {
             path.file_stem().unwrap().to_str().unwrap().to_string()
         };
 
-        let (token, reciever) = if let Some(v) = datastore.create_plugin(name.clone()).await {
+        let (token, reciever, sender) = if let Some(v) = datastore.create_plugin(name.clone()).await {
             v
         } else {
             error!("Unable to register Plugin {}, name collision", name);
