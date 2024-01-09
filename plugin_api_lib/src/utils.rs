@@ -20,7 +20,7 @@ pub fn get_string(ptr: *mut c_char) -> Option<String> {
     }.to_string())
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Value {
     None,
     Int(i64),

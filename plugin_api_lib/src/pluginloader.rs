@@ -1,11 +1,12 @@
 use std::{path::PathBuf, fs};
 
 use dlopen2::wrapper::{WrapperApi, Container, WrapperMultiApi};
+use kanal::Sender;
 use log::{error, info, debug};
 
 use tokio::task::JoinSet;
 
-use crate::{PluginHandle, utils, datastore::DataStore, DataStoreReturnCode};
+use crate::{PluginHandle, utils::{self, Value}, datastore::DataStore, DataStoreReturnCode, PropertyHandle};
 
 pub(crate) async fn load_all_plugins(datastore: &'static tokio::sync::RwLock<DataStore>) -> Result<JoinSet<()>,Box<dyn std::error::Error>> {
     let plugin_folder = PathBuf::from("./plugins/");
@@ -81,15 +82,22 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
             return;
         }
 
-        
+
+        // Main Run loop
+        let mut poller = tokio::spawn(store_list(vec![], vec![]));
+
+        let _temp = sender.as_async().send(Message {}).await;
+        while let Ok(_msg) = reciever.as_async().recv().await {
+            let (list, changed) = poller.await.unwrap();
+            poller = tokio::spawn(poll_propertys(datastore, list, changed, sender));
+
+            // Currently we can't do anything
+            break;
+        }
+
 
 
         // End of life
-        // let t = unsafe {
-        //     Box::from_raw(ptr_h)
-        //     
-        // };
-
         let mut w_store = datastore.write().await;
         if DataStoreReturnCode::Ok != w_store.delete_plugin(&token).await {
             error!("Plugin {} failed to shutdown properly", get_plugin_name(&ptr_h));
@@ -110,6 +118,52 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
     } else {
         debug!("Unable to load {} as a plugin", path.to_str().unwrap());
     }
+}
+
+async fn poll_propertys(
+    datastore: &'static tokio::sync::RwLock<DataStore>,
+    mut list: Vec<(PropertyHandle, Value)>,
+    mut changed: Vec<(PropertyHandle, Value)>,
+    sender: Sender<Message>
+) -> (Vec<(PropertyHandle, Value)>,Vec<(PropertyHandle, Value)>) {
+    let ds = datastore.read().await;
+
+    changed.clear();
+    
+    let mut index = 0;
+    while let Some((handle, last_value)) = list.get_mut(index) {
+        match ds.get_property(handle).await {
+            Ok(res) => {
+                if res != *last_value {
+                    // Value changed
+                    changed.push((handle.clone(), res.clone()));
+                    *last_value = res;
+                }
+            },
+            Err(DataStoreReturnCode::OutdatedPropertyHandle) => {
+                // we need to send a message that this property got lost
+                let _ = sender.as_async().send(Message {}).await;
+
+                list.remove(index); // We will remove this item
+
+                // We have to re-iterate over the item on this index,
+                // as all items got moved forward
+                index -= 1; 
+            },
+            Err(_) => () // this should not happen
+        }
+        index += 1;
+    }
+
+    let _ = sender.as_async().send(Message {}).await;
+
+    (list,changed)
+}
+
+/// Serves to temporarily store the list within a joinhandle
+/// this is used when no subscriptions exist, or when subscribing to a new property
+async fn store_list(list: Vec<(PropertyHandle, Value)>, changed: Vec<(PropertyHandle, Value)>) -> (Vec<(PropertyHandle, Value)>, Vec<(PropertyHandle, Value)>) {
+    (list,changed)
 }
 
 // We have to do this, as you can otherwise not await anything
@@ -147,6 +201,17 @@ struct PluginFuncWrapper {
 }
 
 pub(crate) struct Message {
+
+}
+
+// Sketchup of what Message will internally become
+enum Mess {
+    Polled,
+    Subscribe(PropertyHandle),
+    Unsubscribe(PropertyHandle),
+    Update((PropertyHandle, Value)),
+    Removed(PropertyHandle),
+    Shutdown
 
 }
 

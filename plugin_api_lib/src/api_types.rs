@@ -36,6 +36,7 @@ pub struct ReturnValue<T> {
 /// A Handle that serves for easy access to getting and updating properties
 /// These handles can be from time to time invalidated if a property seizes to exist
 #[repr(C)]
+#[derive(Clone)]
 pub struct PropertyHandle {
     pub index: usize,
     pub hash: u64
