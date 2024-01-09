@@ -6,7 +6,7 @@ use crate::utils;
 /// Unique Handle of your plugin, allowing you to interact with the API
 pub struct PluginHandle {
     pub(crate) name: String,
-    pub(crate) datastore: &'static crate::datastore::DataStore,
+    pub(crate) datastore: &'static tokio::sync::RwLock<crate::datastore::DataStore>,
     pub(crate) token: crate::datastore::Token
 }
 

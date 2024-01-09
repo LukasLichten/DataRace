@@ -5,7 +5,6 @@ mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
-#[allow(unused_variables, dead_code)]
 mod datastore;
 
 mod pluginloader;
@@ -36,7 +35,7 @@ pub extern "C" fn run() {
 
 async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
     info!("Launching DataRace...");
-    let datastore: &'static datastore::DataStore  = Box::leak(Box::new(datastore::DataStore::new()));
+    let datastore: &'static tokio::sync::RwLock<datastore::DataStore>  = Box::leak(Box::new(datastore::DataStore::new()));
 
     let mut plugin_set = pluginloader::load_all_plugins(datastore).await?;
     

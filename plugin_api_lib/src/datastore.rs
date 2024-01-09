@@ -2,7 +2,7 @@ use std::sync::{atomic::{AtomicU64, AtomicI64, AtomicBool, Ordering}, Arc};
 use std::hash::{Hasher,Hash};
 
 use fnv::{FnvHashMap,FnvHasher};
-use log::debug;
+use log::{debug, error};
 use tokio::sync::{RwLock, Mutex};
 use kanal::{Sender, Receiver};
 use rand::{RngCore, SeedableRng};
@@ -13,36 +13,34 @@ use crate::{pluginloader::Message, DataStoreReturnCode, PropertyHandle, utils::V
 /// This is our centralized State
 pub(crate) struct DataStore {
     // Definitly some optimizations can be made here
-    property_map: RwLock<FnvHashMap<String, usize>>,
-    propertys: RwLock<Vec<Property>>,
-    plugins: RwLock<Vec<Plugin>>
+    property_map: FnvHashMap<String, usize>,
+    propertys: Vec<Property>,
+    plugins: Vec<Plugin>
 }
 
 impl DataStore {
-    pub fn new() -> DataStore {
-        DataStore {
-            property_map: RwLock::new(FnvHashMap::default()), 
-            propertys: RwLock::new(Vec::<Property>::new()),
-            plugins: RwLock::new(Vec::<Plugin>::new())
-        }
+    pub fn new() -> RwLock<DataStore> {
+        RwLock::new(DataStore {
+            property_map: FnvHashMap::default(), 
+            propertys: Vec::<Property>::new(),
+            plugins: Vec::<Plugin>::new()
+        })
     }
 
-    pub async fn create_property(&self, token: &Token, name: String, value: Value) -> Result<PropertyHandle,DataStoreReturnCode> {
+    pub(crate) async fn create_property(&mut self, token: &Token, name: String, value: Value) -> Result<PropertyHandle,DataStoreReturnCode> {
         let name = name.trim();
         if name.is_empty() {
             return Err(DataStoreReturnCode::AlreadyExists);
         }
 
-        if let Some(plugin_name) = self.get_plugin_name_from_token(token).await {
-            let (mut w_map, mut w_list) = (self.property_map.write().await, self.propertys.write().await);
-            
+        if let Some(plugin_name) = self.get_plugin_name_from_token(token) {
             let property_name = format!("{}.{}", plugin_name, name);
 
             // Property seems to exist already...
             // Placeholders could have been created by listeners
-            if let Some(address) = w_map.get(&property_name) {
+            if let Some(address) = self.property_map.get(&property_name) {
                 let address = address.clone();
-                if let Some(item) = w_list.get_mut(address) {
+                if let Some(item) = self.propertys.get_mut(address) {
                     if item.plugin_token == Token::default() && property_name == item.name {
                         // This is a placeholder, we replace the token, set Value, and ping
                         // listeners
@@ -50,7 +48,6 @@ impl DataStore {
                         item.plugin_token = token.clone();
                         item.value = ValueContainer::new(value.clone());
 
-                        drop(w_map);
                         // We can't drop w_list, it would mean cloning all listeners
                         // Even though this means if the listener immediatly acts and tries to
                         // access propertys will find it locked
@@ -68,14 +65,16 @@ impl DataStore {
                         return Err(DataStoreReturnCode::AlreadyExists);
                     } else {
                         // For some reason the hashmap takes us here, but this is not the address
-                        panic!("Corruption in the datastore: map pointes to item of a different name");
+                        error!("Corruption in the datastore: map pointes to item of a different name");
+                        return Err(DataStoreReturnCode::DataCorrupted);
                     }
                 } else {
                     // Something is corrupted here
                     // TODO: We could fix it, removing the bad reference from the HashMap, but what
                     // if the item exists somewhere else? We would need to iterate through all
                     // properties to check
-                    panic!("Corruption in the datastore: map contains pointer beyond array");
+                    error!("Corruption in the datastore: map contains pointer beyond array");
+                    return Err(DataStoreReturnCode::DataCorrupted);
                 }
             }
 
@@ -85,7 +84,7 @@ impl DataStore {
 
             let name_hash = hasher.finish();
 
-            w_list.push(Property { 
+            self.propertys.push(Property { 
                 name: property_name.clone(), 
                 name_hash, 
                 plugin_token: token.clone(), 
@@ -93,9 +92,9 @@ impl DataStore {
                 value: ValueContainer::new(value)
             });
 
-            let index = w_list.len() - 1;
+            let index = self.propertys.len() - 1;
 
-            w_map.insert(property_name, index);
+            self.property_map.insert(property_name, index);
 
             return Ok(PropertyHandle { index, hash: name_hash });
         } else {
@@ -105,9 +104,7 @@ impl DataStore {
     }
 
     pub(crate) async fn update_property(&self, token: &Token, handle: &PropertyHandle, value: Value) -> DataStoreReturnCode {
-        let r_list = self.propertys.read().await;
-
-        if let Some(item) = r_list.get(handle.index.clone()) {
+        if let Some(item) = self.propertys.get(handle.index.clone()) {
             if item.name_hash != handle.hash {
                 return DataStoreReturnCode::OutdatedPropertyHandle;
             }
@@ -116,12 +113,10 @@ impl DataStore {
                 return DataStoreReturnCode::NotAuthenticated;
             }
 
-            if let Some(value) = item.value.update(value).await {
-                
+            if let Some(_value) = item.value.update(value).await {
                 for p in item.listeners.iter() {
                     let _ = p.as_async().send(Message {} ).await;
                 }
-
 
                 DataStoreReturnCode::Ok
             } else {
@@ -134,7 +129,6 @@ impl DataStore {
 
 #[allow(unused_variables, dead_code)]
     pub(crate) async fn change_property_name(&self, token: &Token, handle: &PropertyHandle, name: String) -> Result<PropertyHandle, DataStoreReturnCode> {
-        let (mut w_list, mut w_map) = (self.propertys.write().await, self.property_map.write().await);
         todo!()
     }
 
@@ -143,10 +137,8 @@ impl DataStore {
         todo!();
     }
 
-    pub(crate) async fn subscribe_to_property(&self, token: &Token, handle: &PropertyHandle) -> DataStoreReturnCode {
-        let r_list = self.propertys.read().await;
-
-        if let Some(item) = r_list.get(handle.index.clone()) {
+    pub(crate) async fn subscribe_to_property(&mut self, token: &Token, handle: &PropertyHandle) -> DataStoreReturnCode {
+        if let Some(item) = self.propertys.get_mut(handle.index.clone()) {
             if item.name_hash != handle.hash {
                 return DataStoreReturnCode::OutdatedPropertyHandle;
             }
@@ -154,10 +146,7 @@ impl DataStore {
             if item.value.is_atomic() {
                 // We are sending a message into the pluginmanager to poll this property, as this
                 // is more performant
-                
-                let r_plugins = self.plugins.read().await;
-
-                for p in r_plugins.iter() {
+                for p in self.plugins.iter() {
                     if &p.token == token {
                         if p.channel.as_async().send(Message { }).await.is_ok() {
                             return DataStoreReturnCode::Ok
@@ -172,49 +161,27 @@ impl DataStore {
 
                 DataStoreReturnCode::NotAuthenticated
             } else {
-                // We will add this as a listener
-                
-                // We need write access on the properties list, so we need to drop these first
-                drop(r_list);
-                let mut w_list = self.propertys.write().await;
-
-                if let Some(mut item) = w_list.get_mut(handle.index.clone()) {
-                    // We have to verify it didn't change between the drop and write aquire
-                    if item.name_hash != handle.hash {
-                        return DataStoreReturnCode::OutdatedPropertyHandle;
+                for p in self.plugins.iter() {
+                    if &p.token == token {
+                        item.listeners.push(p.channel.clone());
+                        return DataStoreReturnCode::Ok
                     }
-
-                    let r_plugins = self.plugins.read().await;
-
-                    for p in r_plugins.iter() {
-                        if &p.token == token {
-                            item.listeners.push(p.channel.clone());
-                            return DataStoreReturnCode::Ok
-                        }
-                    }
-
-                    DataStoreReturnCode::NotAuthenticated
-                } else {
-                    DataStoreReturnCode::OutdatedPropertyHandle
                 }
+
+                DataStoreReturnCode::NotAuthenticated
             }
         } else {
             DataStoreReturnCode::OutdatedPropertyHandle
         }
     }
 
-#[allow(unused_variables, dead_code)]
-    pub(crate) async fn unsubscribe_from_property(&self, token: &Token, handle: &PropertyHandle) -> DataStoreReturnCode {
-        let mut w_list = self.propertys.write().await;
-
-        if let Some(mut item) = w_list.get_mut(handle.index.clone()) {
+    pub(crate) async fn unsubscribe_from_property(&mut self, token: &Token, handle: &PropertyHandle) -> DataStoreReturnCode {
+        if let Some(item) = self.propertys.get_mut(handle.index.clone()) {
             if item.name_hash != handle.hash {
                 return DataStoreReturnCode::OutdatedPropertyHandle;
             }
 
-            let r_plugins = self.plugins.read().await;
-
-            for p in r_plugins.iter() {
+            for p in self.plugins.iter() {
                 if &p.token == token {
                     let _ = p.channel.as_async().send(Message {}).await;
                     
@@ -229,10 +196,8 @@ impl DataStore {
         DataStoreReturnCode::OutdatedPropertyHandle
     }
 
-    pub(crate) async fn delete_property(&self, token: &Token, handle: &PropertyHandle) -> DataStoreReturnCode {
-        let (mut w_map, mut w_list) = (self.property_map.write().await, self.propertys.write().await);
-        
-        if let Some(item) = w_list.get_mut(handle.index.clone()) {
+    pub(crate) async fn delete_property(&mut self, token: &Token, handle: &PropertyHandle) -> DataStoreReturnCode {
+        if let Some(item) = self.propertys.get_mut(handle.index.clone()) {
             if item.name_hash != handle.hash {
                 return DataStoreReturnCode::OutdatedPropertyHandle;
             }
@@ -242,7 +207,7 @@ impl DataStore {
             }
 
             // Everything is authenticated
-            w_map.remove(&item.name);
+            self.property_map.remove(&item.name);
 
             // We can't delete items out of the vector, we have to empty them
             item.name = String::new();
@@ -263,18 +228,16 @@ impl DataStore {
         }
     }
 
-    pub(crate) async fn get_property_handle(&self, name: String) -> Result<PropertyHandle, DataStoreReturnCode> {
+    pub(crate) fn get_property_handle(&self, name: String) -> Result<PropertyHandle, DataStoreReturnCode> {
         let name = name.trim().to_string();
         if name.is_empty() {
             return Err(DataStoreReturnCode::DoesNotExist);
         }
 
-        let (r_map, r_list) = (self.property_map.read().await, self.propertys.read().await);
-        
-        if let Some(address) = r_map.get(&name) {
+        if let Some(address) = self.property_map.get(&name) {
             let address = address.clone();
 
-            if let Some(item) = r_list.get(address) {
+            if let Some(item) = self.propertys.get(address) {
                 if item.name != name {
                     panic!("Corrupted Datastore: Map links to property that is not the property");
                 }
@@ -289,9 +252,7 @@ impl DataStore {
     }
 
     pub(crate) async fn get_property(&self, handle: &PropertyHandle) -> Result<Value, DataStoreReturnCode> {
-        let r_list = self.propertys.read().await;
-
-        if let Some(item) = r_list.get(handle.index.clone()) {
+        if let Some(item) = self.propertys.get(handle.index.clone()) {
             if item.name_hash != handle.hash {
                 return Err(DataStoreReturnCode::OutdatedPropertyHandle);
             }
@@ -302,18 +263,17 @@ impl DataStore {
         }
     }
 
-    pub(crate) async fn create_plugin(&self, name: String) -> Option<(Token, Receiver<Message>, Sender<Message>)> {
+    pub(crate) fn create_plugin(&mut self, name: String) -> Option<(Token, Receiver<Message>, Sender<Message>)> {
         if name.trim().is_empty() {
             return None;
         }
 
-        let mut w_plugin = self.plugins.write().await;
         
         let mut token = Token::default();
         while token == Token::default() {
             token = Token::new();
 
-            for plugin in w_plugin.iter() {
+            for plugin in self.plugins.iter() {
                 if plugin.token == token {
                     token = Token::default();
                     break;
@@ -325,15 +285,13 @@ impl DataStore {
 
         let (sx,rx) = kanal::unbounded();
         
-        w_plugin.push(Plugin { name, token: token.clone(), channel: sx.clone() });
+        self.plugins.push(Plugin { name, token: token.clone(), channel: sx.clone() });
 
         Some((token, rx, sx))
     }
 
-    pub(crate) async fn delete_plugin(&self, token: &Token) -> DataStoreReturnCode {
-        let mut w_plugin = self.plugins.write().await;
-
-        for p in w_plugin.iter_mut() {
+    pub(crate) async fn delete_plugin(&mut self, token: &Token) -> DataStoreReturnCode {
+        for p in self.plugins.iter_mut() {
             if &p.token == token {
                 // We can't remove a plugin as it would change the index of items
                 p.name = String::new();
@@ -343,24 +301,23 @@ impl DataStore {
                 //p.channel = None
 
                 // Need to delete all properties tied to this plugins
-                let (mut w_map, mut w_list) = (self.property_map.write().await, self.propertys.write().await);
-            
-                for index in 0..w_list.len() {
-                    let item = &w_list[index];
-                    if &item.plugin_token == token {
-                        debug!("Cleaning up property {} with value {}", &item.name, if let ValueContainer::Int(i) = &item.value { i.load(Ordering::Acquire).to_string() } else { "Error".to_string() });
-                        // We have to delete this plugin
-                        w_map.remove(&item.name);
+                for index in 0..self.propertys.len() {
+                    if let Some(item) = self.propertys.get_mut(index) {
+                        if &item.plugin_token == token {
+                            debug!("Cleaning up property {} with value {}", &item.name, if let ValueContainer::Int(i) = &item.value { i.load(Ordering::Acquire).to_string() } else { "Error".to_string() });
+                            // We have to delete this plugin
+                            self.property_map.remove(&item.name);
 
-                        w_list[index].name = String::new();
-                        w_list[index].name_hash = 0;
-                        w_list[index].plugin_token = Token::default();
-                        w_list[index].value = ValueContainer::None;
+                            item.name = String::new();
+                            item.name_hash = 0;
+                            item.plugin_token = Token::default();
+                            item.value = ValueContainer::None;
 
-                        for p in w_list[index].listeners.iter() {
-                            let _ = p.as_async().send(Message {} ).await;
+                            for p in item.listeners.iter() {
+                                let _ = p.as_async().send(Message {} ).await;
+                            }
+                            item.listeners.clear();
                         }
-                        w_list[index].listeners.clear();
                     }
                 }
                 
@@ -375,19 +332,16 @@ impl DataStore {
         DataStoreReturnCode::DoesNotExist
     } 
     
-    /// Be careful, this can deadlock any caller who has taken a lock on plugins
-    async fn get_plugin_name_from_token(&self, token: &Token) -> Option<String> {
+    fn get_plugin_name_from_token(&self, token: &Token) -> Option<String> {
         if token == &Token::default() {
             // default is reserved for none/owned by Datastore
             return None;
         }
 
-        let r_plugins = self.plugins.read().await;
-
         // This is highly inefficient, but considering there is only like 2 dozend plugins this
         // should never be a problem
         // And we only need this when registering Plugins
-        for p in r_plugins.iter() {
+        for p in self.plugins.iter() {
             if &p.token == token {
                 return Some(p.name.clone());
             }

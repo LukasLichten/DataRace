@@ -62,7 +62,10 @@ pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, 
     let msg = get_string!(name);
 
     // This is shitty, but this is hopefully a decent stopgap
-    let res = futures::executor::block_on(han.datastore.create_property(&han.token, msg, utils::Value::new(value)));
+    let res = futures::executor::block_on(async {
+        let mut ds = han.datastore.write().await;
+        ds.create_property(&han.token, msg, utils::Value::new(value)).await
+    });
     
     
     ReturnValue::from(res) 
@@ -76,7 +79,10 @@ pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, 
 pub extern  "C" fn update_property(handle: *mut PluginHandle, prop_handle: PropertyHandle, value: Property) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
     
-    let res = futures::executor::block_on(han.datastore.update_property(&han.token, &prop_handle, utils::Value::new(value)));
+    let res = futures::executor::block_on(async {
+        let ds = han.datastore.read().await;
+        ds.update_property(&han.token, &prop_handle, utils::Value::new(value)).await
+    });
 
     res
 }
@@ -89,7 +95,10 @@ pub extern  "C" fn update_property(handle: *mut PluginHandle, prop_handle: Prope
 pub extern "C" fn get_property_value(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> ReturnValue<Property> {
     let han = get_handle_val!(handle);
 
-    let res = futures::executor::block_on(han.datastore.get_property(&prop_handle));
+    let res = futures::executor::block_on(async {
+        let ds = han.datastore.read().await;
+        ds.get_property(&prop_handle).await
+    });
 
     ReturnValue::from(match res {
         Ok(val) => {
@@ -109,7 +118,10 @@ pub extern "C" fn get_property_handle(handle: *mut PluginHandle, name: *mut c_ch
     let han = get_handle_val!(handle);
     let msg = get_string!(name);
 
-    let res = futures::executor::block_on(han.datastore.get_property_handle(msg));
+    let res = futures::executor::block_on(async {
+        let ds = han.datastore.read().await;
+        ds.get_property_handle(msg)
+    });
 
     ReturnValue::from(res)
 }
@@ -119,7 +131,10 @@ pub extern "C" fn get_property_handle(handle: *mut PluginHandle, name: *mut c_ch
 pub extern "C" fn delete_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
-    let res = futures::executor::block_on(han.datastore.delete_property(&han.token, &prop_handle));
+    let res = futures::executor::block_on(async {
+        let mut ds = han.datastore.write().await;
+        ds.delete_property(&han.token, &prop_handle).await
+    });
     res
 }
 

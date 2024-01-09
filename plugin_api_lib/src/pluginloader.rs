@@ -7,7 +7,7 @@ use tokio::task::JoinSet;
 
 use crate::{PluginHandle, utils, datastore::DataStore, DataStoreReturnCode};
 
-pub(crate) async fn load_all_plugins(datastore: &'static DataStore) -> Result<JoinSet<()>,Box<dyn std::error::Error>> {
+pub(crate) async fn load_all_plugins(datastore: &'static tokio::sync::RwLock<DataStore>) -> Result<JoinSet<()>,Box<dyn std::error::Error>> {
     let plugin_folder = PathBuf::from("./plugins/");
 
     if !plugin_folder.is_dir() {
@@ -41,7 +41,7 @@ pub(crate) async fn load_all_plugins(datastore: &'static DataStore) -> Result<Jo
     Ok(plugin_task_handles)
 }
 
-async fn run_plugin(path: PathBuf, datastore: &'static DataStore) {
+async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataStore>) {
     if let Ok(wrapper) = unsafe { Container::<PluginWrapper>::load(path.to_str().unwrap()) } {
         // Preperations
         let name = if let Some(ref name_handle) = wrapper.name {
@@ -61,12 +61,15 @@ async fn run_plugin(path: PathBuf, datastore: &'static DataStore) {
             path.file_stem().unwrap().to_str().unwrap().to_string()
         };
 
-        let (token, reciever, sender) = if let Some(v) = datastore.create_plugin(name.clone()).await {
+
+        let mut w_store = datastore.write().await;
+        let (token, reciever, sender) = if let Some(v) = w_store.create_plugin(name.clone()) {
             v
         } else {
             error!("Unable to register Plugin {}, name collision", name);
             return;
         };
+        drop(w_store);
 
         let handle = PluginHandle { name, datastore, token: token.clone() };
         let ptr_h = PtrWrapper { ptr: Box::into_raw(Box::new(handle)) };
@@ -87,11 +90,13 @@ async fn run_plugin(path: PathBuf, datastore: &'static DataStore) {
         //     
         // };
 
-        if DataStoreReturnCode::Ok != datastore.delete_plugin(&token).await {
+        let mut w_store = datastore.write().await;
+        if DataStoreReturnCode::Ok != w_store.delete_plugin(&token).await {
             error!("Plugin {} failed to shutdown properly", get_plugin_name(&ptr_h));
         } else {
             info!("Plugin {} stopped", get_plugin_name(&ptr_h));
         }
+        drop(w_store);
 
 
         // Should we deallocate the PluginHandle?
