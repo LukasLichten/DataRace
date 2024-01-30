@@ -138,6 +138,40 @@ pub extern "C" fn delete_property(handle: *mut PluginHandle, prop_handle: Proper
     res
 }
 
+/// Subscribes you to a property, this will allow you to receive messages whenever this value
+/// changes (sort of). Values are gathered leveraging the async runtime, so this is preferable over
+/// polling manually via get_property_value.
+///
+/// If the type is a string you will receive a message for each time the value is updated
+/// However all other types are polled by the pluginmanager, with messages send when at least one
+/// changed. This means there is no guarantee that you will see all values.
+/// Polling manually does not garantee this either
+#[no_mangle]
+pub extern "C" fn subscribe_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+
+    let res = futures::executor::block_on(async {
+        let mut ds = han.datastore.write().await;
+        ds.subscribe_to_property(&han.token, &prop_handle).await
+    });
+    res
+}
+
+/// Removes subscription off this plugin from a certain property
+///
+/// You may after this call still receive some messages from updates of this property for a brief
+/// time as the message queue is emptied
+#[no_mangle]
+pub extern "C" fn unsubscribe_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+
+    let res = futures::executor::block_on(async {
+        let mut ds = han.datastore.write().await;
+        ds.unsubscribe_from_property(&han.token, &prop_handle).await
+    });
+    res
+}
+
 /// Logs a null terminated String as a Info
 /// String is not deallocated, that is your job
 #[no_mangle]

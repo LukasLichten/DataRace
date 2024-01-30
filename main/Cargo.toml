@@ -9,3 +9,4 @@ built = "0.7"
 
 [dependencies]
 datarace_plugin_api_sys = { path = "../plugin_api_sys", features = ["main-entry"] }
+

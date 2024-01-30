@@ -119,3 +119,31 @@ pub fn delete_property(handle: &PluginHandle, prop_handle: PropertyHandle) -> Da
 
     DataStoreReturnCode::from(res)
 }
+
+/// Subscribes you to a property, this will allow you to receive messages whenever this value
+/// changes (sort of). Values are gathered leveraging the async runtime, so this is preferable over
+/// polling manually via get_property_value.
+///
+/// If the type is a string you will receive a message for each time the value is updated
+/// However all other types are polled by the pluginmanager, with messages send when at least one
+/// changed. This means there is no guarantee that you will see all values.
+/// Polling manually does not garantee this either
+pub fn subscribe_property(handle: &PluginHandle, prop_handle: &PropertyHandle) -> DataStoreReturnCode {
+    let res = unsafe {
+        sys::subscribe_property(handle.get_ptr(), prop_handle.get_inner())
+    };
+
+    DataStoreReturnCode::from(res)
+}
+
+/// Removes subscription off this plugin from a certain property
+///
+/// You may after this call still receive some messages from updates of this property for a brief
+/// time as the message queue is emptied
+pub fn unsubscribe_property(handle: &PluginHandle, prop_handle: &PropertyHandle) -> DataStoreReturnCode {
+    let res = unsafe {
+        sys::unsubscribe_property(handle.get_ptr(), prop_handle.get_inner())
+    };
+
+    DataStoreReturnCode::from(res)
+}

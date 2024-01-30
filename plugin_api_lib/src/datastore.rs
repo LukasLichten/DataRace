@@ -4,7 +4,7 @@ use std::hash::{Hasher,Hash};
 use fnv::{FnvHashMap,FnvHasher};
 use log::{debug, error};
 use tokio::sync::{RwLock, Mutex};
-use kanal::{Sender, Receiver};
+use kanal::{AsyncSender, Receiver, Sender};
 use rand::{RngCore, SeedableRng};
 use rand_hc::Hc128Rng;
 
@@ -27,6 +27,7 @@ impl DataStore {
         })
     }
 
+    #[allow(unreachable_code)]
     pub(crate) async fn create_property(&mut self, token: &Token, name: String, value: Value) -> Result<PropertyHandle,DataStoreReturnCode> {
         let name = name.trim();
         if name.is_empty() {
@@ -48,16 +49,11 @@ impl DataStore {
                         item.plugin_token = token.clone();
                         item.value = ValueContainer::new(value.clone());
 
-                        // We can't drop w_list, it would mean cloning all listeners
-                        // Even though this means if the listener immediatly acts and tries to
-                        // access propertys will find it locked
-                        // However, as this should only happen once, in regular updates we only
-                        // need read lock
-
-                        for p in item.listeners.iter() {
-                            // Out creation could be stalled by a full message queue...
-                            let _ = p.as_async().send(Message {}).await;
-                        }
+                        todo!("Placeholder handling");
+                        // for p in item.listeners.iter() {
+                        //     // Out creation could be stalled by a full message queue...
+                        //     let _ = p.as_async().send(Message {}).await;
+                        // }
 
                         return Ok(PropertyHandle { index: address, hash: item.name_hash.clone() });
                     } else if property_name == item.name {
@@ -88,7 +84,6 @@ impl DataStore {
                 name: property_name.clone(), 
                 name_hash, 
                 plugin_token: token.clone(), 
-                listeners: vec![],
                 value: ValueContainer::new(value)
             });
 
@@ -113,11 +108,7 @@ impl DataStore {
                 return DataStoreReturnCode::NotAuthenticated;
             }
 
-            if let Some(_value) = item.value.update(value).await {
-                for p in item.listeners.iter() {
-                    let _ = p.as_async().send(Message {} ).await;
-                }
-
+            if item.value.update(value).await {
                 DataStoreReturnCode::Ok
             } else {
                 DataStoreReturnCode::TypeMissmatch
@@ -142,8 +133,18 @@ impl DataStore {
             if item.name_hash != handle.hash {
                 return DataStoreReturnCode::OutdatedPropertyHandle;
             }
-            
-            if item.value.is_atomic() {
+
+            if let ValueContainer::Str(ref _mu, ref mut listeners) = item.value {
+                // Strings have special listeners that we subscribe to this way
+                for p in self.plugins.iter() {
+                    if &p.token == token {
+                        listeners.push((p.channel.clone().to_async(),token.clone()));
+                        return DataStoreReturnCode::Ok
+                    }
+                }
+
+                DataStoreReturnCode::NotAuthenticated
+            } else {
                 // We are sending a message into the pluginmanager to poll this property, as this
                 // is more performant
                 for p in self.plugins.iter() {
@@ -160,16 +161,7 @@ impl DataStore {
                 }
 
                 DataStoreReturnCode::NotAuthenticated
-            } else {
-                for p in self.plugins.iter() {
-                    if &p.token == token {
-                        item.listeners.push(p.channel.clone());
-                        return DataStoreReturnCode::Ok
-                    }
-                }
-
-                DataStoreReturnCode::NotAuthenticated
-            }
+            } 
         } else {
             DataStoreReturnCode::OutdatedPropertyHandle
         }
@@ -181,11 +173,33 @@ impl DataStore {
                 return DataStoreReturnCode::OutdatedPropertyHandle;
             }
 
+            if let ValueContainer::Str(ref _mu, ref mut listeners) = item.value {
+                let mut index = 0;
+                while index < listeners.len() {
+                    let (_sub, ls_token) = &listeners[index];
+                    if ls_token == token {
+                        break;
+                    }
+
+                    index += 1;
+                }
+
+                if index < listeners.len() {
+                    listeners.remove(index);
+                }
+
+                // Yes, this means even when we didn't subscribe through not being subscribed we
+                // return OK, but this is in line with polled values (where we don't know what the
+                // pluginhandler state is or anything)
+                //
+                // Also this is fine, as now we are unsubscribed, it just was unnecessary
+                return DataStoreReturnCode::Ok;
+            }
+
             for p in self.plugins.iter() {
                 if &p.token == token {
                     let _ = p.channel.as_async().send(Message {}).await;
                     
-                    // item.listeners.retain(|l| l != &p.channel);
                     return DataStoreReturnCode::Ok;
                 }
             }
@@ -213,12 +227,15 @@ impl DataStore {
             item.name = String::new();
             item.name_hash = 0;
             item.plugin_token = Token::default();
-            item.value = ValueContainer::None;
+            if let ValueContainer::Str(_mu, listeners) = &item.value {
+                // In case of string we have to inform everyone that the property was deleted
 
-            for p in item.listeners.iter() {
-                let _ = p.as_async().send(Message {} ).await;
+                for (sub,_) in listeners.iter() {
+                    let _ = sub.send(Message {  }).await;
+                }
             }
-            item.listeners.clear();
+
+            item.value = ValueContainer::None;
 
             // TODO: keep track of empty cells to repopulate
 
@@ -267,7 +284,6 @@ impl DataStore {
         if name.trim().is_empty() {
             return None;
         }
-
         
         let mut token = Token::default();
         while token == Token::default() {
@@ -311,19 +327,37 @@ impl DataStore {
                             item.name = String::new();
                             item.name_hash = 0;
                             item.plugin_token = Token::default();
-                            item.value = ValueContainer::None;
+                            if let ValueContainer::Str(_mu, listeners) = &item.value {
+                                // In case of string we have to inform everyone that the property was deleted
 
-                            for p in item.listeners.iter() {
-                                let _ = p.as_async().send(Message {} ).await;
+                                for (sub,_) in listeners.iter() {
+                                    let _ = sub.send(Message {  }).await;
+                                }
                             }
-                            item.listeners.clear();
+                            item.value = ValueContainer::None;
+                        } else if let ValueContainer::Str(ref _mu, ref mut listeners) = item.value {
+                            // We also unsubscribe from the propertys that are type string
+                            // This could be a massive waste of time on shutdown
+                            
+                            
+                            let mut index = 0;
+                            while index < listeners.len() {
+                                let (_sub, ls_token) = &listeners[index];
+                                if ls_token == token {
+                                    break;
+                                }
+
+                                index += 1;
+                            }
+
+                            if index < listeners.len() {
+                                listeners.remove(index);
+                            }
+                            
+                            
                         }
                     }
                 }
-                
-                // We should also remove the subscription of every property, but that is way way to
-                // expensive, and the delete_plugin should really only be called during crashes and shutdown
-                // At least during shutdown this would be a massive waste of time
                 
                 return DataStoreReturnCode::Ok;
             }
@@ -355,7 +389,6 @@ pub(crate) struct Property {
     name: String,
     name_hash: u64,
     plugin_token: Token,
-    listeners: Vec<Sender<Message>>,
     value: ValueContainer
 }
 
@@ -367,7 +400,7 @@ pub(crate) enum ValueContainer {
     Int(AtomicI64),
     Float(AtomicU64),
     Bool(AtomicBool),
-    Str(Mutex<Arc<String>>),
+    Str(Mutex<Arc<String>>, Vec<(AsyncSender<Message>, Token)>),
     Dur(AtomicI64)
 }
 
@@ -378,37 +411,42 @@ impl ValueContainer {
             Value::Int(i) => ValueContainer::Int(AtomicI64::new(i)),
             Value::Float(f) => ValueContainer::Float(AtomicU64::new(f)),
             Value::Bool(b) => ValueContainer::Bool(AtomicBool::new(b)),
-            Value::Str(s) => ValueContainer::Str(Mutex::new(s)),
+            Value::Str(s) => ValueContainer::Str(Mutex::new(s), Vec::default()),
             Value::Dur(d) => ValueContainer::Dur(AtomicI64::new(d))
         }
     }
 
-    async fn update(&self, val: Value) -> Option<Value> {
-        Some(match (val,self) {
-            (Value::None, ValueContainer::None) => Value::None,
+    async fn update(&self, val: Value) -> bool {
+        match (val,self) {
+            (Value::None, ValueContainer::None) => true,
             (Value::Int(i), ValueContainer::Int(at)) => {
                 at.store(i, Ordering::Release);
-                Value::Int(i)
+                true
             },
             (Value::Float(f), ValueContainer::Float(at)) => {
                 at.store(f, Ordering::Release);
-                Value::Float(f)
+                true
             },
             (Value::Bool(b), ValueContainer::Bool(at)) => {
                 at.store(b, Ordering::Release);
-                Value::Bool(b)
+                true
             },
-            (Value::Str(s),ValueContainer::Str(mu)) => {
+            (Value::Str(s),ValueContainer::Str(mu, listener)) => {
                 let mut res = mu.lock().await;
                 *res = s.clone();
-                Value::Str(s)
+
+                for (sub,_) in listener.iter() {
+                    let _ = sub.send(Message {  }).await;
+                }
+
+                true
             },
             (Value::Dur(d), ValueContainer::Dur(at)) => {
                 at.store(d, Ordering::Release);
-                Value::Dur(d)
+                true
             },
-            _ => return None,
-        })
+            _ => false,
+        }
     }
 
     async fn read(&self) -> Value {
@@ -417,21 +455,13 @@ impl ValueContainer {
             ValueContainer::Int(at) => Value::Int(at.load(Ordering::Acquire)),
             ValueContainer::Float(at) => Value::Float(at.load(Ordering::Acquire)),
             ValueContainer::Bool(at) => Value::Bool(at.load(Ordering::Acquire)),
-            ValueContainer::Str(mu) => { 
+            ValueContainer::Str(mu,_) => { 
                 let res = mu.lock().await;
                 let a = res.clone();
                 Value::Str(a)
             },
             ValueContainer::Dur(at) => Value::Dur(at.load(Ordering::Acquire)),
         }
-    }
-
-    fn is_atomic(&self) -> bool {
-        if let ValueContainer::Str(_) = self {
-            return false;
-        }
-
-        true
     }
 }
 
