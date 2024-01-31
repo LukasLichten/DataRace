@@ -19,6 +19,12 @@ pub use bindings::{create_property, update_property, get_property_value, get_pro
 // Enums
 pub use bindings::{DataStoreReturnCode, DataStoreReturnCode_Ok, DataStoreReturnCode_NotAuthenticated, DataStoreReturnCode_AlreadyExists, DataStoreReturnCode_DoesNotExist, DataStoreReturnCode_OutdatedPropertyHandle, DataStoreReturnCode_TypeMissmatch, DataStoreReturnCode_DataCorrupted};
 pub use bindings::{PropertyType, PropertyType_None, PropertyType_Int, PropertyType_Float, PropertyType_Boolean, PropertyType_Str, PropertyType_Duration};
+pub use bindings::{MessageType, MessageType_Update, MessageType_Removed}; 
+
+// Message
+pub use bindings::{Message, MessageValue};
+pub use bindings::UpdateValue;
+pub use bindings::reenqueue_message;
 
 // Property
 pub use bindings::{Property, PropertyValue, PropertyHandle};

@@ -1,4 +1,4 @@
-use std::ffi::CString;
+use std::{ffi::CString, mem::ManuallyDrop};
 
 use libc::c_char;
 use crate::utils;
@@ -36,7 +36,7 @@ pub struct ReturnValue<T> {
 /// A Handle that serves for easy access to getting and updating properties
 /// These handles can be from time to time invalidated if a property seizes to exist
 #[repr(C)]
-#[derive(Clone)]
+#[derive(Clone,Copy,PartialEq)]
 pub struct PropertyHandle {
     pub index: usize,
     pub hash: u64
@@ -122,5 +122,67 @@ impl TryFrom<crate::utils::Value> for Property {
             },
             utils::Value::Dur(d) => Property { sort: PropertyType::Duration, value: PropertyValue { dur: d }}
         })
+    }
+}
+
+#[repr(C)]
+pub struct Message {
+    pub sort: MessageType,
+    pub value: MessageValue
+}
+
+#[repr(u8)]
+pub enum MessageType {
+    Update = 0,
+    Removed = 1
+}
+
+#[repr(C)]
+pub union MessageValue {
+    pub removed_property: PropertyHandle,
+    pub update: ManuallyDrop<UpdateValue> 
+}
+
+#[repr(C)]
+pub struct UpdateValue {
+    pub handle: PropertyHandle,
+    pub value: Property
+}
+
+impl TryFrom<crate::pluginloader::Message> for Message {
+    type Error = ();
+
+    fn try_from(value: crate::pluginloader::Message) -> Result<Self, Self::Error> {
+        Ok(match value {
+            crate::pluginloader::Message::Update(handle, value) => {
+                if let Ok(value) = Property::try_from(value) {
+                    Message { sort: MessageType::Update, value: MessageValue { update: ManuallyDrop::new(UpdateValue { handle, value } )  } }
+                } else {
+                    return Err(());
+                }
+            },
+            crate::pluginloader::Message::Removed(handle) => {
+                Message { sort: MessageType::Removed, value: MessageValue { removed_property: handle }}
+
+            },
+            _ => return Err(())
+        })
+    }
+}
+
+impl Drop for Message {
+    fn drop(&mut self) {
+        match self.sort {
+            MessageType::Update => unsafe {
+                ManuallyDrop::drop(&mut self.value.update);
+            },
+            _ => ()
+        }
+    }
+}
+
+impl Default for UpdateValue {
+    fn default() -> Self {
+        UpdateValue { handle: PropertyHandle::default(), value: Property::default() }
     }
 }

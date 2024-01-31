@@ -65,3 +65,42 @@ pub extern "C" fn free_plugin_name(ptr: *mut std::os::raw::c_char) {
 }
     }.into_token_stream().into()
 }
+
+/// Generates the update function REQUIRED for your plugin <br>
+/// Pass in the name of your function that will handle the update messages<br>
+/// This function needs to take a wrapper::PluginHandle and wrapper::Message as parameter, and return a Result<(),String><br>
+/// <br>
+/// Return Ok() if everything worked, use Err if not and to log the message.<br>
+/// Also, you don't have to use String, any type that implements ToString works (as long as you
+/// didn't Box it).<br>
+/// <br>
+/// If you return Err or panic a none 0 code is returned to DataRace, which will halt the execution
+/// of this plugin.
+#[proc_macro]
+pub fn update_fn(input: TokenStream) -> TokenStream {
+
+    let func_name = quote::format_ident!("{}", input.to_string());
+    
+    quote! {
+#[no_mangle]
+pub extern "C" fn update(handle: *mut datarace_plugin_api_wrapper::reexport::PluginHandle, msg: datarace_plugin_api_wrapper::reexport::Message) -> std::os::raw::c_int {
+    let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::new(handle);
+    let message = datarace_plugin_api_wrapper::wrappers::Message::from(msg);
+    let res = std::panic::catch_unwind(|| {
+        #func_name(han, message)
+    });
+
+    match res {
+        Ok(Ok(_)) => 0,
+        Ok(Err(text)) => {
+            datarace_plugin_api_wrapper::api::log_error(&datarace_plugin_api_wrapper::wrappers::PluginHandle::new(handle), text.to_string());
+            1
+        },
+        Err(_) => {
+            datarace_plugin_api_wrapper::api::log_error(&datarace_plugin_api_wrapper::wrappers::PluginHandle::new(handle), "Plugin Update Paniced!");
+            10
+        }
+    }
+}
+    }.into_token_stream().into()
+}

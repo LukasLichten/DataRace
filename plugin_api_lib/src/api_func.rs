@@ -1,7 +1,9 @@
+use std::mem::ManuallyDrop;
+
 use libc::c_char;
 use log::error;
 
-use crate::{utils,PluginHandle,DataStoreReturnCode,PropertyHandle,Property,ReturnValue};
+use crate::{pluginloader, utils, DataStoreReturnCode, Message, MessageType, PluginHandle, Property, PropertyHandle, ReturnValue};
 
 
 macro_rules! get_handle {
@@ -202,4 +204,49 @@ fn log_plugin_msg(handle: *mut PluginHandle, message: *mut c_char, log_level: lo
         .level(log_level)
         .args(format_args!("[{}] {msg}", han.name))
         .build());
+}
+
+/// Puts a message back into the Queue
+///
+/// Keep in mind, if you reenque an Update message, this may result in another value update for
+/// this property coming inbetween, resulting in you progressing next the newer value before the
+/// reenqueued value
+///
+/// Part of the point of this function is so the Message type is included in the generated header
+#[no_mangle]
+pub extern "C" fn reenqueue_message(handle: *mut PluginHandle, msg: Message) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    
+    // need to reencode Message
+    let re_coded = match msg.sort {
+        MessageType::Update => {
+            unsafe {
+                let mut msg = msg;
+                let up = ManuallyDrop::into_inner(std::mem::take(&mut msg.value.update));
+
+                pluginloader::Message::Update(up.handle, utils::Value::new(up.value))
+            }
+        },
+        MessageType::Removed => {
+            unsafe {
+                let handle = msg.value.removed_property;
+                pluginloader::Message::Removed(handle)
+            }
+        }
+    };
+
+    // we have to retrieve this plugins channel
+    let res = futures::executor::block_on(async {
+        let ds = han.datastore.read().await;
+        if let Some(chan) = ds.get_plugin_channel(&han.name).await {
+            if chan.send(re_coded).await.is_ok() {
+                DataStoreReturnCode::Ok
+            } else {
+                DataStoreReturnCode::DoesNotExist
+            }
+        } else {
+            DataStoreReturnCode::NotAuthenticated
+        }
+    });
+    res
 }

@@ -6,7 +6,7 @@ use log::{error, info, debug};
 
 use tokio::task::JoinSet;
 
-use crate::{PluginHandle, utils::{self, Value}, datastore::DataStore, DataStoreReturnCode, PropertyHandle};
+use crate::{api_types, datastore::DataStore, utils::{self, Value}, DataStoreReturnCode, PluginHandle, PropertyHandle};
 
 pub(crate) async fn load_all_plugins(datastore: &'static tokio::sync::RwLock<DataStore>) -> Result<JoinSet<()>,Box<dyn std::error::Error>> {
     let plugin_folder = PathBuf::from("./plugins/");
@@ -40,6 +40,20 @@ pub(crate) async fn load_all_plugins(datastore: &'static tokio::sync::RwLock<Dat
 
  
     Ok(plugin_task_handles)
+}
+
+macro_rules! send_update {
+    ($wrapper:ident, $ptr_h:ident, $msg: ident) => {
+        if let Ok(msg) = api_types::Message::try_from($msg) {
+            if $wrapper.func.update($ptr_h.ptr, msg) != 0 {
+                error!("Plugin {} failed on update", get_plugin_name(&$ptr_h));
+                break;
+            }     
+        } else {
+            // What do we do if the parse is not okay? idk...
+            error!("Failed to parse message ");
+        }
+    };
 }
 
 async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataStore>) {
@@ -127,24 +141,36 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
                     poller = tokio::spawn(store_list(list, changed))
                 },
                 Message::Polled => {
-                    let (list, mut changed) = poller.await.unwrap();
+                    let (list, changed) = poller.await.unwrap();
                     
-                    for (_prop_handle, _value) in changed.iter() {
-                        
+                    let mut skipped = changed.len();
+                    for (prop_handle, value) in changed {
+                        let msg = Message::Update(prop_handle, value);
+                        send_update!(wrapper, ptr_h, msg);
+
+                        skipped -= 1;
+                    }
+                    if skipped != 0 {
+                        // This means the loop was broken due to a fail, so we break out of this
+                        // loop
+                        break;
                     }
 
-                    changed.clear();
+                    // changed.clear();
+                    let changed = vec![];
                     poller = if list.len() == 0 {
                         tokio::spawn(store_list(list, changed))
                     } else {
                         tokio::spawn(poll_propertys(datastore, list, changed, sender.clone()))
                     };
                 },
-                Message::Update(_prop_handle, _value) => {
-
+                Message::Update(prop_handle, value) => {
+                    let msg = Message::Update(prop_handle, value);
+                    send_update!(wrapper, ptr_h, msg);
                 },
-                Message::Removed(_prop_handle) => {
-
+                Message::Removed(prop_handle) => {
+                    let msg = Message::Removed(prop_handle);
+                    send_update!(wrapper, ptr_h, msg);
                 }
             }
         }
@@ -251,7 +277,8 @@ struct PluginNameWrapper {
 
 #[derive(WrapperApi)]
 struct PluginFuncWrapper {
-    init: extern "C" fn(handle: *mut PluginHandle) -> libc::c_int
+    init: extern "C" fn(handle: *mut PluginHandle) -> libc::c_int,
+    update: extern "C" fn(handle: *mut PluginHandle, msg: api_types::Message) -> libc::c_int
 }
 
 // Sketchup of what Message will internally become

@@ -171,3 +171,40 @@ impl Display for DataStoreReturnCode {
         })
     }
 }
+
+
+pub enum Message {
+    Update(PropertyHandle, Property),
+    Removed(PropertyHandle),
+
+    Unknown
+}
+
+impl From<sys::Message> for Message {
+    fn from(value: sys::Message) -> Self {
+        match value.sort {
+            sys::MessageType_Update => {
+                unsafe {
+                    let val = value.value.update;
+                    
+                    Message::Update(PropertyHandle::new(val.handle), Property::new(val.value))
+                }
+            },
+            sys::MessageType_Removed => {
+                unsafe {
+                    let val = value.value.removed_property;
+                    
+                    Message::Removed(PropertyHandle::new(val))
+                }
+            },
+            _ => Message::Unknown
+        }
+    }
+}
+
+impl Message {
+    #[allow(dead_code)]
+    pub(crate) fn to_c(self) -> sys::Message {
+        todo!("Implement to c for Message for reenqueueing...");
+    }
+}

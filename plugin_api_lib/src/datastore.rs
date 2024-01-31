@@ -375,6 +375,16 @@ impl DataStore {
 
         DataStoreReturnCode::DoesNotExist
     } 
+
+    pub(crate) async fn get_plugin_channel(&self, name: &String) -> Option<AsyncSender<Message>> {
+        for item in self.plugins.iter() {
+            if &item.name == name {
+                return Some(item.channel.as_async().clone());
+            }
+        }
+
+        None
+    }
     
     fn get_plugin_name_from_token(&self, token: &Token) -> Option<String> {
         if token == &Token::default() {
