@@ -2,7 +2,7 @@ use std::sync::{atomic::{AtomicU64, AtomicI64, AtomicBool, Ordering}, Arc};
 use std::hash::{Hasher,Hash};
 
 use fnv::{FnvHashMap,FnvHasher};
-use log::{debug, error};
+use log::{error, info};
 use tokio::sync::{RwLock, Mutex};
 use kanal::{AsyncSender, Receiver, Sender};
 use rand::{RngCore, SeedableRng};
@@ -15,7 +15,8 @@ pub(crate) struct DataStore {
     // Definitly some optimizations can be made here
     property_map: FnvHashMap<String, usize>,
     propertys: Vec<Property>,
-    plugins: Vec<Plugin>
+    plugins: Vec<Plugin>,
+    shutdown: bool
 }
 
 impl DataStore {
@@ -23,7 +24,8 @@ impl DataStore {
         RwLock::new(DataStore {
             property_map: FnvHashMap::default(), 
             propertys: Vec::<Property>::new(),
-            plugins: Vec::<Plugin>::new()
+            plugins: Vec::<Plugin>::new(),
+            shutdown: false
         })
     }
 
@@ -108,7 +110,7 @@ impl DataStore {
                 return DataStoreReturnCode::NotAuthenticated;
             }
 
-            if item.value.update(value).await {
+            if item.value.update(value, handle).await {
                 DataStoreReturnCode::Ok
             } else {
                 DataStoreReturnCode::TypeMissmatch
@@ -149,7 +151,7 @@ impl DataStore {
                 // is more performant
                 for p in self.plugins.iter() {
                     if &p.token == token {
-                        if p.channel.as_async().send(Message { }).await.is_ok() {
+                        if p.channel.as_async().send(Message::Subscribe(handle.clone())).await.is_ok() {
                             return DataStoreReturnCode::Ok
                         } else {
                             // We don't have a special case for when this happens
@@ -198,7 +200,7 @@ impl DataStore {
 
             for p in self.plugins.iter() {
                 if &p.token == token {
-                    let _ = p.channel.as_async().send(Message {}).await;
+                    let _ = p.channel.as_async().send(Message::Unsubscribe(handle.clone())).await;
                     
                     return DataStoreReturnCode::Ok;
                 }
@@ -231,7 +233,7 @@ impl DataStore {
                 // In case of string we have to inform everyone that the property was deleted
 
                 for (sub,_) in listeners.iter() {
-                    let _ = sub.send(Message {  }).await;
+                    let _ = sub.send(Message::Removed(handle.clone()) ).await;
                 }
             }
 
@@ -281,6 +283,10 @@ impl DataStore {
     }
 
     pub(crate) fn create_plugin(&mut self, name: String) -> Option<(Token, Receiver<Message>, Sender<Message>)> {
+        if self.shutdown {
+            return None;
+        }
+
         if name.trim().is_empty() {
             return None;
         }
@@ -316,12 +322,18 @@ impl DataStore {
                 //Can't unset this, but the channel should be closed automatically anyway
                 //p.channel = None
 
+                if self.shutdown {
+                    // short cut
+                    return DataStoreReturnCode::Ok;
+                }
+
                 // Need to delete all properties tied to this plugins
                 for index in 0..self.propertys.len() {
                     if let Some(item) = self.propertys.get_mut(index) {
                         if &item.plugin_token == token {
-                            debug!("Cleaning up property {} with value {}", &item.name, if let ValueContainer::Int(i) = &item.value { i.load(Ordering::Acquire).to_string() } else { "Error".to_string() });
-                            // We have to delete this plugin
+                            // debug!("Cleaning up property {} with value {}", &item.name, if let ValueContainer::Int(i) = &item.value { i.load(Ordering::Acquire).to_string() } else { "Error".to_string() });
+                            let prop_handle = PropertyHandle { index, hash: item.name_hash };
+
                             self.property_map.remove(&item.name);
 
                             item.name = String::new();
@@ -331,14 +343,12 @@ impl DataStore {
                                 // In case of string we have to inform everyone that the property was deleted
 
                                 for (sub,_) in listeners.iter() {
-                                    let _ = sub.send(Message {  }).await;
+                                    let _ = sub.send(Message::Removed(prop_handle.clone())).await;
                                 }
                             }
                             item.value = ValueContainer::None;
                         } else if let ValueContainer::Str(ref _mu, ref mut listeners) = item.value {
                             // We also unsubscribe from the propertys that are type string
-                            // This could be a massive waste of time on shutdown
-                            
                             
                             let mut index = 0;
                             while index < listeners.len() {
@@ -383,6 +393,19 @@ impl DataStore {
 
         None
     }
+
+    pub(crate) async fn start_shutdown(&mut self) {
+        info!("Beginning Shutdown... ");
+        self.shutdown = true;
+
+        for plugin in self.plugins.iter() {
+            let _ = plugin.channel.as_async().send(Message::Shutdown).await;
+        }
+    }
+
+    pub(crate) fn get_shutdown_status(&self) -> bool {
+        self.shutdown
+    }
 }
 
 pub(crate) struct Property {
@@ -416,7 +439,7 @@ impl ValueContainer {
         }
     }
 
-    async fn update(&self, val: Value) -> bool {
+    async fn update(&self, val: Value, prop_handle: &PropertyHandle) -> bool {
         match (val,self) {
             (Value::None, ValueContainer::None) => true,
             (Value::Int(i), ValueContainer::Int(at)) => {
@@ -436,7 +459,7 @@ impl ValueContainer {
                 *res = s.clone();
 
                 for (sub,_) in listener.iter() {
-                    let _ = sub.send(Message {  }).await;
+                    let _ = sub.send(Message::Update(prop_handle.clone(),Value::Str(s.clone()))).await;
                 }
 
                 true

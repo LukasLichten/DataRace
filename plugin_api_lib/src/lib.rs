@@ -37,8 +37,18 @@ async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
     info!("Launching DataRace...");
     let datastore: &'static tokio::sync::RwLock<datastore::DataStore>  = Box::leak(Box::new(datastore::DataStore::new()));
 
+    ctrlc::set_handler(move || {
+        futures::executor::block_on(async {
+            // We shut down everything
+            let mut ds = datastore.write().await;
+            ds.start_shutdown().await;
+            drop(ds);
+        });
+    })?;
+
     let mut plugin_set = pluginloader::load_all_plugins(datastore).await?;
     
+
     // Stops the Runtime from closing when plugins are still running
     while let Some(res) = plugin_set.join_next().await {
         match res {

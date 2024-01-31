@@ -66,6 +66,9 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
         let mut w_store = datastore.write().await;
         let (token, reciever, sender) = if let Some(v) = w_store.create_plugin(name.clone()) {
             v
+        } else if w_store.get_shutdown_status() {
+            error!("Unable to register Plugin {}, shut down already in progress", name);
+            return;
         } else {
             error!("Unable to register Plugin {}, name collision", name);
             return;
@@ -82,17 +85,68 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
             return;
         }
 
+        let async_rec = reciever.to_async();
+
 
         // Main Run loop
         let mut poller = tokio::spawn(store_list(vec![], vec![]));
 
-        let _temp = sender.as_async().send(Message {}).await;
-        while let Ok(_msg) = reciever.as_async().recv().await {
-            let (list, changed) = poller.await.unwrap();
-            poller = tokio::spawn(poll_propertys(datastore, list, changed, sender));
+        // let _ = sender.as_async().send(Message::Polled).await;
+        while let Ok(msg) = async_rec.recv().await {
+            match msg {
+                Message::Shutdown => break,
+                Message::Subscribe(prop_handle) => {
+                    // We will finish the polling so we add this prop handle to the list, then let
+                    // the list be stored dormant in a task till needed
+                    let (mut list, changed) = poller.await.unwrap();
 
-            // Currently we can't do anything
-            break;
+                    if list.len() == 0 {
+                        // To start the polling task proper
+                        let _ = sender.as_async().send(Message::Polled).await;
+                    }
+
+                    list.push((prop_handle, Value::None));
+
+                    poller = tokio::spawn(store_list(list, changed))
+                },
+                Message::Unsubscribe(prop_handle) => {
+                    let (mut list, changed) = poller.await.unwrap();
+
+                    let mut index = 0;
+                    while let Some((han, _)) = list.get(index) {
+                        if han.index == prop_handle.index && han.hash == prop_handle.hash {
+                            break;
+                        }
+                        index += 1;
+                    }
+
+                    if index < list.len() {
+                        list.remove(index);
+                    }
+
+                    poller = tokio::spawn(store_list(list, changed))
+                },
+                Message::Polled => {
+                    let (list, mut changed) = poller.await.unwrap();
+                    
+                    for (_prop_handle, _value) in changed.iter() {
+                        
+                    }
+
+                    changed.clear();
+                    poller = if list.len() == 0 {
+                        tokio::spawn(store_list(list, changed))
+                    } else {
+                        tokio::spawn(poll_propertys(datastore, list, changed, sender.clone()))
+                    };
+                },
+                Message::Update(_prop_handle, _value) => {
+
+                },
+                Message::Removed(_prop_handle) => {
+
+                }
+            }
         }
 
 
@@ -142,7 +196,7 @@ async fn poll_propertys(
             },
             Err(DataStoreReturnCode::OutdatedPropertyHandle) => {
                 // we need to send a message that this property got lost
-                let _ = sender.as_async().send(Message {}).await;
+                let _ = sender.as_async().send(Message::Removed(handle.clone())).await;
 
                 list.remove(index); // We will remove this item
 
@@ -155,7 +209,7 @@ async fn poll_propertys(
         index += 1;
     }
 
-    let _ = sender.as_async().send(Message {}).await;
+    let _ = sender.as_async().send(Message::Polled).await;
 
     (list,changed)
 }
@@ -200,16 +254,12 @@ struct PluginFuncWrapper {
     init: extern "C" fn(handle: *mut PluginHandle) -> libc::c_int
 }
 
-pub(crate) struct Message {
-
-}
-
 // Sketchup of what Message will internally become
-enum Mess {
+pub(crate) enum Message {
     Polled,
     Subscribe(PropertyHandle),
     Unsubscribe(PropertyHandle),
-    Update((PropertyHandle, Value)),
+    Update(PropertyHandle, Value),
     Removed(PropertyHandle),
     Shutdown
 

@@ -23,6 +23,7 @@ kanal = "0.1.0-pre8"
 rand = "0.8.5"
 rand_hc = "0.3.2"
 fnv = "1.0.7"
+ctrlc = "3.4"
 
 futures = "0.3"
 
