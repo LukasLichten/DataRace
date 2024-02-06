@@ -1,6 +1,6 @@
 .phony: all build plugin-api test-plugin clean test final help 
 
-all: build test-plugin
+all: build
 	# Test Plugin temporary build also during make
 	LD_LIBRARY_PATH=./target/release/ ./target/release/datarace
 

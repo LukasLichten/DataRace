@@ -1,3 +1,5 @@
+use std::sync::{atomic::AtomicBool, Arc};
+
 use log::{info, error, debug};
 use tokio::runtime::Builder;
 
@@ -6,6 +8,8 @@ mod built_info {
 }
 
 mod datastore;
+
+mod web;
 
 mod pluginloader;
 pub(crate) mod utils;
@@ -37,16 +41,28 @@ async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
     info!("Launching DataRace...");
     let datastore: &'static tokio::sync::RwLock<datastore::DataStore>  = Box::leak(Box::new(datastore::DataStore::new()));
 
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let sh_clone = shutdown.clone();
     ctrlc::set_handler(move || {
         futures::executor::block_on(async {
+            if shutdown.load(std::sync::atomic::Ordering::Acquire) {
+                // we are already in a shutdown
+                error!("Stop requested a second time, so we are now hard exiting");
+                std::process::exit(1);
+            }
+
             // We shut down everything
             let mut ds = datastore.write().await;
             ds.start_shutdown().await;
             drop(ds);
+
+            shutdown.store(true, std::sync::atomic::Ordering::Release);
         });
     })?;
 
     let mut plugin_set = pluginloader::load_all_plugins(datastore).await?;
+
+    web::run_webserver(datastore, sh_clone).await?;
     
 
     // Stops the Runtime from closing when plugins are still running
