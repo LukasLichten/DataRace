@@ -1,21 +1,24 @@
-use std::sync::{atomic::AtomicBool, Arc};
+use std::{str::FromStr, sync::{atomic::AtomicBool, Arc}};
 
+use axum::{response::Html, routing::get};
 use log::{debug, info};
-use socketioxide::{extract::{Data, SocketRef}, SocketIo};
 use tokio::{net::TcpListener, sync::RwLock};
 
 use crate::datastore::DataStore;
 
+type DataStoreLocked = &'static RwLock<DataStore>;
 
+mod utils;
+mod socket;
 
 pub(crate) async fn run_webserver(datastore: &'static RwLock<DataStore>, shutdown: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
-    let (layer, io) = SocketIo::new_layer();
-
-    io.ns("/", on_connect);
+    debug!("Setting up webserver...");
+    let layer = socket::create_socketio_layer(datastore).await;
 
     let app = axum::Router::new()
+        .route("/", get(|| async { serve_page("index.html").await }))
+        .route("/style.css", get(|| async { serve_page("style.css").await }))
         .with_state(datastore)
-        .route("/", axum::routing::get(|| async { "Hello, World!" }))
         .layer(layer);
     let listener = TcpListener::bind("0.0.0.0:3000").await?;
 
@@ -27,10 +30,11 @@ pub(crate) async fn run_webserver(datastore: &'static RwLock<DataStore>, shutdow
     Ok(())
 }
 
-async fn on_connect(socket: SocketRef, Data(data): Data<serde_json::Value>) {
-    debug!("Someone is trying to connect: {}", data.to_string());
+async fn serve_page(asset: &str) -> Html<String> {
+    let mut path = std::path::PathBuf::from_str("./plugin_api_lib/assets").unwrap();
+    path.push(asset);
 
-    socket.on("message", |socket: SocketRef| {
-        socket.emit("message-back", "Hello, World!").ok();
-    });
+    let val = std::fs::read_to_string(path.as_path()).unwrap();
+
+    Html(val)
 }

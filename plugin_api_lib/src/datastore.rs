@@ -138,6 +138,15 @@ impl DataStore {
 
             if let ValueContainer::Str(ref _mu, ref mut listeners) = item.value {
                 // Strings have special listeners that we subscribe to this way
+                for (_, old_token) in listeners.iter() {
+                    if old_token == token {
+                        // We return OK, as with collisions in none strings we don't know if they
+                        // collide.
+                        // But I guess, the user requested to be subscribed, and is still
+                        // subscribed afterwards, so I guess okay
+                        return DataStoreReturnCode::Ok;
+                    }
+                }
                 for p in self.plugins.iter() {
                     if &p.token == token {
                         listeners.push((p.channel.clone().to_async(),token.clone()));

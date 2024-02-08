@@ -119,8 +119,19 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
                         let _ = sender.as_async().send(Message::Polled).await;
                     }
 
-                    list.push((prop_handle, Value::None));
-
+                    // Making sure we don't subscribe to it twice
+                    let mut is_present = false;
+                    for (old_prop_handle, _) in list.iter() {
+                        if old_prop_handle == &prop_handle {
+                            is_present = true;
+                            break;
+                        }
+                    }
+                    
+                    if !is_present {
+                        list.push((prop_handle, Value::None));
+                    }
+                    
                     poller = tokio::spawn(store_list(list, changed))
                 },
                 Message::Unsubscribe(prop_handle) => {
@@ -143,17 +154,9 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
                 Message::Polled => {
                     let (list, changed) = poller.await.unwrap();
                     
-                    let mut skipped = changed.len();
                     for (prop_handle, value) in changed {
                         let msg = Message::Update(prop_handle, value);
                         send_update!(wrapper, ptr_h, msg);
-
-                        skipped -= 1;
-                    }
-                    if skipped != 0 {
-                        // This means the loop was broken due to a fail, so we break out of this
-                        // loop
-                        break;
                     }
 
                     // changed.clear();

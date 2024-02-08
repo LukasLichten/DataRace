@@ -55,9 +55,9 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
                 // source your prop handle
                 api::update_property(&handle, &prop_handle, Property::Int(i + 1));
 
-                if i > 400_000 {
-                    api::delete_property(&handle, prop_handle);
-                }
+                // if i > 400_000 {
+                //     api::delete_property(&handle, prop_handle);
+                // }
             }
         },
         Message::Removed(_prop_handle) => {

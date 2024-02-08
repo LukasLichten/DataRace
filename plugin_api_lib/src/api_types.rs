@@ -11,7 +11,7 @@ pub struct PluginHandle {
 }
 
 /// Return codes from operations like create_property, etc.
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 #[repr(u8)]
 pub enum DataStoreReturnCode {
     Ok = 0,
