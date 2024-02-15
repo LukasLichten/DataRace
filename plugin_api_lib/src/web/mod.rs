@@ -2,16 +2,14 @@ use std::{str::FromStr, sync::{atomic::AtomicBool, Arc}};
 
 use axum::{response::Html, routing::get};
 use log::{debug, info};
-use tokio::{net::TcpListener, sync::RwLock};
+use tokio::net::TcpListener;
 
-use crate::datastore::DataStore;
-
-type DataStoreLocked = &'static RwLock<DataStore>;
+use utils::DataStoreLocked;
 
 mod utils;
 mod socket;
 
-pub(crate) async fn run_webserver(datastore: &'static RwLock<DataStore>, shutdown: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) async fn run_webserver(datastore: DataStoreLocked, shutdown: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
     debug!("Setting up webserver...");
     let layer = socket::create_socketio_layer(datastore).await;
 

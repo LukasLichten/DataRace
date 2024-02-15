@@ -292,6 +292,15 @@ impl DataStore {
     }
 
     pub(crate) fn create_plugin(&mut self, name: String) -> Option<(Token, Receiver<Message>, Sender<Message>)> {
+        let (sx,rx) = kanal::unbounded();
+        
+        let token = self.register_plugin(name, sx.clone())?;
+
+        Some((token, rx, sx))
+    }
+
+    /// Reuses an existing channel
+    pub(crate) fn register_plugin(&mut self, name: String, sx: Sender<Message>) -> Option<Token> {
         if self.shutdown {
             return None;
         }
@@ -314,11 +323,8 @@ impl DataStore {
             }
         }
 
-        let (sx,rx) = kanal::unbounded();
-        
-        self.plugins.push(Plugin { name, token: token.clone(), channel: sx.clone() });
-
-        Some((token, rx, sx))
+        self.plugins.push(Plugin { name, token: token.clone(), channel: sx });
+        Some(token)
     }
 
     pub(crate) async fn delete_plugin(&mut self, token: &Token) -> DataStoreReturnCode {
