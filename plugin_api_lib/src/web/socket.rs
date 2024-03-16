@@ -52,13 +52,13 @@ async fn on_connect(socket: SocketRef) {
             // this is a plugin, we have to internally register it
             let mut w_ds = store.datastore.write().await;
 
-            if let Some(token) = w_ds.register_plugin(name.clone(), store.sender.as_sync().clone()) {
-                store.insert_auth(socket.id, Auth::Plugin(token, Arc::new(name))).await;
-            } else {
-                // Failed, likely name collision
-                error!("Failed to create Plugin");
-                return;
-            }
+            // if let Some(token) = w_ds.register_plugin(name.clone(), 0, store.sender.as_sync().clone()) {
+            //     store.insert_auth(socket.id, Auth::Plugin(token, Arc::new(name))).await;
+            // } else {
+            //     // Failed, likely name collision
+            //     error!("Failed to create Plugin");
+            //     return;
+            // }
         } else {
             // Consumer only
             store.insert_auth(socket.id, Auth::Consumer).await;
@@ -67,13 +67,13 @@ async fn on_connect(socket: SocketRef) {
 
 
     socket.on("get_property", |socket: SocketRef, Data(_data): Data<serde_json::Value>, State(store): State<SocketDataRef>| async move {
-        let r_store = store.datastore.read().await;
-        let han = r_store.get_property_handle("sample_plugin.Test".to_string()).unwrap();
-        let val = r_store.get_property(&han).await.unwrap();
-
-        drop(r_store);
-
-        socket.emit("get_property-return", if let crate::utils::Value::Int(i) = val { i.to_string() } else { "null".to_string() } ).ok();
+        // let r_store = store.datastore.read().await;
+        // let han = r_store.get_property_handle("sample_plugin.Test".to_string()).unwrap();
+        // let val = r_store.get_property(&han).await.unwrap();
+        //
+        // drop(r_store);
+        //
+        // socket.emit("get_property-return", if let crate::utils::Value::Int(i) = val { i.to_string() } else { "null".to_string() } ).ok();
         
     });
 

@@ -1,13 +1,28 @@
-use std::{ffi::CString, mem::ManuallyDrop};
+use std::{ffi::CString, mem::ManuallyDrop, sync::Arc};
 
 use libc::c_char;
-use crate::utils;
+use crate::utils; 
+use hashbrown::HashMap;
 
 /// Unique Handle of your plugin, allowing you to interact with the API
 pub struct PluginHandle {
     pub(crate) name: String,
     pub(crate) datastore: &'static tokio::sync::RwLock<crate::datastore::DataStore>,
-    pub(crate) token: crate::datastore::Token
+    pub(crate) id: u64,
+    pub(crate) subscriptions: HashMap<PropertyHandle, Arc<utils::ValueContainer>>,
+    pub(crate) properties: HashMap<PropertyHandle, Arc<utils::ValueContainer>>,
+}
+
+impl PluginHandle {
+    pub(crate) fn new(name: String, id: u64, datastore: &'static tokio::sync::RwLock<crate::datastore::DataStore>) -> PluginHandle {
+        PluginHandle {
+            name,
+            datastore,
+            id,
+            subscriptions: HashMap::default(),
+            properties: HashMap::default()
+        }
+    }
 }
 
 /// Return codes from operations like create_property, etc.
@@ -20,8 +35,19 @@ pub enum DataStoreReturnCode {
     DoesNotExist = 3,
     OutdatedPropertyHandle = 4,
     TypeMissmatch = 5,
-    DataCorrupted = 10
+    NotImplemented = 6,
+    ParameterCorrupted = 10, 
+    DataCorrupted = 11
 
+}
+
+#[repr(C)]
+pub struct PluginDescription {
+    pub name: *mut c_char,
+    pub id: u64,
+    pub version: [u16;3],
+    pub api_version: u64,
+    
 }
 
 /// Return Value for an API function
@@ -34,12 +60,18 @@ pub struct ReturnValue<T> {
 }
 
 /// A Handle that serves for easy access to getting and updating properties
-/// These handles can be from time to time invalidated if a property seizes to exist
+/// These handles can (and should be where possible) generated at compile time
 #[repr(C)]
-#[derive(Clone,Copy,PartialEq)]
+#[derive(Clone,Copy,PartialEq,Hash)]
 pub struct PropertyHandle {
-    pub index: usize,
-    pub hash: u64
+    pub plugin: u64,
+    pub property: u64
+}
+
+impl Default for PropertyHandle {
+    fn default() -> Self {
+        PropertyHandle { plugin: 0, property: 0 }
+    }
 }
 
 /// The Type and Value of a Property
@@ -88,12 +120,6 @@ impl<T> From<Result<T,DataStoreReturnCode>> for ReturnValue<T> where T: Default 
             Ok(val) => ReturnValue { code: DataStoreReturnCode::Ok, value: val },
             Err(e) => ReturnValue { code: e, value: T::default() }
         }
-    }
-}
-
-impl Default for PropertyHandle {
-    fn default() -> Self {
-        PropertyHandle { index: 0, hash: 0 }    
     }
 }
 

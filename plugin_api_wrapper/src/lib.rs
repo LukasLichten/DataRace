@@ -8,6 +8,7 @@ pub mod wrappers;
 pub mod reexport {
     pub use datarace_plugin_api_sys::PluginHandle;
     pub use datarace_plugin_api_sys::Message;
+    pub use datarace_plugin_api_sys::PluginDescription;
 }
 
 /// For building callback functions simply

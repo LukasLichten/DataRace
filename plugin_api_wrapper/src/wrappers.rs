@@ -137,7 +137,9 @@ pub enum DataStoreReturnCode {
     DoesNotExist = 3,
     OutdatedPropertyHandle = 4,
     TypeMissmatch = 5,
-    DataCorrupted = 10,
+    NotImplemented = 6,
+    ParameterCorrcupted = 10,
+    DataCorrupted = 11,
     Unknown = 255
 
 }
@@ -151,6 +153,8 @@ impl From<sys::DataStoreReturnCode> for DataStoreReturnCode {
             sys::DataStoreReturnCode_DoesNotExist => DataStoreReturnCode::DoesNotExist,
             sys::DataStoreReturnCode_OutdatedPropertyHandle => DataStoreReturnCode::OutdatedPropertyHandle,
             sys::DataStoreReturnCode_TypeMissmatch => DataStoreReturnCode::TypeMissmatch,
+            sys::DataStoreReturnCode_NotImplemented => DataStoreReturnCode::NotImplemented,
+            sys::DataStoreReturnCode_ParameterCorrupted => DataStoreReturnCode::ParameterCorrcupted,
             sys::DataStoreReturnCode_DataCorrupted => DataStoreReturnCode::DataCorrupted,
             _ => DataStoreReturnCode::Unknown
         }
@@ -166,6 +170,8 @@ impl Display for DataStoreReturnCode {
             DataStoreReturnCode::DoesNotExist => "Action failed: Can not access item that does not exist",
             DataStoreReturnCode::OutdatedPropertyHandle => "Action failed: PropertyHandle no longer points to the correct item, it might have been renamed or removed. Try requesting a new Handle",
             DataStoreReturnCode::TypeMissmatch => "Action failed: You can only use the same type for updates as you created it with (or use change_property_type)",
+            DataStoreReturnCode::NotImplemented => "Action denied: This function has to still be implemented",
+            DataStoreReturnCode::ParameterCorrcupted => "Action failed: Parameters are inproperly formated or otherwise incorrect",
             DataStoreReturnCode::DataCorrupted => "Error: Unable to parse input Data. This can indicate a bad cstring parameter, but also a corrupted PluginHandle or Datastore, which are non recoverable",
             DataStoreReturnCode::Unknown => "Action failed for an unknown reason. Plugin is too out of date to know this message, possibly the reason for the Error"
         })

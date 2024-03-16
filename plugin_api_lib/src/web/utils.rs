@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use kanal::{AsyncReceiver, AsyncSender};
 use socketioxide::socket::Sid;
 use tokio::sync::RwLock;
-use crate::{datastore::{DataStore, Token}, pluginloader::Message};
+use crate::{datastore::DataStore, pluginloader::Message};
 
 pub(super) type DataStoreLocked = &'static RwLock<DataStore>;
 pub(super) type SocketDataRef = &'static SocketData;
@@ -11,7 +11,7 @@ pub(super) type SocketDataRef = &'static SocketData;
 #[derive(Debug, Clone)]
 pub(super) enum Auth {
     Consumer,
-    Plugin(Token, Arc<String>)
+    Plugin(u64, Arc<String>)
 }
 
 pub(super) struct SocketData {

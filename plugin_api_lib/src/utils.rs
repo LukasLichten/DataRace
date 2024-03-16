@@ -1,7 +1,10 @@
 use libc::c_char; 
-use std::{ffi::{CStr, CString}, sync::Arc};
+use std::{ffi::{CStr, CString}, sync::{Arc, atomic::{AtomicU64, AtomicI64, AtomicBool, Ordering}}};
+use kanal::{Sender, AsyncSender, Receiver};
 
-use crate::{Property, PropertyType};
+use tokio::sync::Mutex;
+
+use crate::{pluginloader::Message, Property, PropertyType, PropertyHandle};
 
 /// Simple way to aquire a String for a null terminating c_char ptr
 /// We do not optain ownership of the String, the owner has to deallocate it
@@ -19,6 +22,84 @@ pub fn get_string(ptr: *mut c_char) -> Option<String> {
         }
     }.to_string())
 }
+
+pub fn get_message_channel() -> (Sender<Message>, Receiver<Message>) {
+    kanal::unbounded()
+}
+
+
+
+#[derive(Debug)]
+pub(crate) enum ValueContainer {
+    None,
+    Int(AtomicI64),
+    Float(AtomicU64),
+    Bool(AtomicBool),
+    Str(Mutex<Arc<String>>, Vec<(AsyncSender<Message>, u64)>),
+    Dur(AtomicI64)
+}
+
+impl ValueContainer {
+    fn new(val: Value) -> ValueContainer {
+        match val {
+            Value::None => ValueContainer::None,
+            Value::Int(i) => ValueContainer::Int(AtomicI64::new(i)),
+            Value::Float(f) => ValueContainer::Float(AtomicU64::new(f)),
+            Value::Bool(b) => ValueContainer::Bool(AtomicBool::new(b)),
+            Value::Str(s) => ValueContainer::Str(Mutex::new(s), Vec::default()),
+            Value::Dur(d) => ValueContainer::Dur(AtomicI64::new(d))
+        }
+    }
+
+    async fn update(&self, val: Value, prop_handle: &PropertyHandle) -> bool {
+        match (val,self) {
+            (Value::None, ValueContainer::None) => true,
+            (Value::Int(i), ValueContainer::Int(at)) => {
+                at.store(i, Ordering::Release);
+                true
+            },
+            (Value::Float(f), ValueContainer::Float(at)) => {
+                at.store(f, Ordering::Release);
+                true
+            },
+            (Value::Bool(b), ValueContainer::Bool(at)) => {
+                at.store(b, Ordering::Release);
+                true
+            },
+            (Value::Str(s),ValueContainer::Str(mu, listener)) => {
+                let mut res = mu.lock().await;
+                *res = s.clone();
+
+                for (sub,_) in listener.iter() {
+                    let _ = sub.send(Message::Update(prop_handle.clone(),Value::Str(s.clone()))).await;
+                }
+
+                true
+            },
+            (Value::Dur(d), ValueContainer::Dur(at)) => {
+                at.store(d, Ordering::Release);
+                true
+            },
+            _ => false,
+        }
+    }
+
+    async fn read(&self) -> Value {
+        match self {
+            ValueContainer::None => Value::None,
+            ValueContainer::Int(at) => Value::Int(at.load(Ordering::Acquire)),
+            ValueContainer::Float(at) => Value::Float(at.load(Ordering::Acquire)),
+            ValueContainer::Bool(at) => Value::Bool(at.load(Ordering::Acquire)),
+            ValueContainer::Str(mu,_) => { 
+                let res = mu.lock().await;
+                let a = res.clone();
+                Value::Str(a)
+            },
+            ValueContainer::Dur(at) => Value::Dur(at.load(Ordering::Acquire)),
+        }
+    }
+}
+
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Value {

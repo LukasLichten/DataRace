@@ -44,7 +44,7 @@ pub fn log_error <S: ToString>(handle: &PluginHandle, msg: S) {
 /// plugin_name.name
 /// The initial value will determine the Type of this Property, as long as you don't call
 /// change_property_type it will be only possible to update using the same type
-pub fn create_property <S: ToString>(handle: &PluginHandle, name: S, init: Property) -> Result<PropertyHandle,DataStoreReturnCode> {
+pub fn create_property <S: ToString>(handle: &PluginHandle, name: S, init: Property) -> DataStoreReturnCode {
     let name_ptr = create_cstring!(name);
 
     let res = unsafe {
@@ -53,12 +53,7 @@ pub fn create_property <S: ToString>(handle: &PluginHandle, name: S, init: Prope
     drop_cstring!(name_ptr);
 
 
-    let code = DataStoreReturnCode::from(res.code);
-    if code != DataStoreReturnCode::Ok {
-        return Err(code);
-    }
-
-    Ok(PropertyHandle::new(res.value))
+    DataStoreReturnCode::from(res)
 }
 
 /// Updates the value of a property
@@ -94,11 +89,11 @@ pub fn get_property_value(handle: &PluginHandle, prop_handle: &PropertyHandle) -
 /// 
 /// It is highly adviced you store this value, as retrieving a new handle for every api call is very expensive
 /// PropertyHandles can become invalid (if for example a property gets renamed or deleted), then a new one has to be requested
-pub fn get_property_handle<S: ToString>(handle: &PluginHandle, name: S) -> Result<PropertyHandle, DataStoreReturnCode> {
+pub fn generate_property_handle<S: ToString>(handle: &PluginHandle, name: S) -> Result<PropertyHandle, DataStoreReturnCode> {
     let name_ptr = create_cstring!(name);
 
     let res = unsafe {
-        sys::get_property_handle(handle.get_ptr(), name_ptr)
+        sys::generate_property_handle(handle.get_ptr(), name_ptr)
     };
     drop_cstring!(name_ptr);
 

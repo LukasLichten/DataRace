@@ -3,6 +3,8 @@ use std::sync::{atomic::AtomicBool, Arc};
 use log::{info, error, debug};
 use tokio::runtime::Builder;
 
+pub const API_VERSION: u64 = 0;
+
 mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
@@ -62,7 +64,7 @@ async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
 
     let mut plugin_set = pluginloader::load_all_plugins(datastore).await?;
 
-    web::run_webserver(datastore, sh_clone).await?;
+    // web::run_webserver(datastore, sh_clone).await?;
     
 
     // Stops the Runtime from closing when plugins are still running

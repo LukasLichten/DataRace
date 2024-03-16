@@ -40,30 +40,39 @@ pub extern "C" fn init(handle: *mut datarace_plugin_api_wrapper::reexport::Plugi
 }
 
 
-/// Generates the OPTIONAL functions to set the name of your plugin <br>
+/// Generates the get_plugin_description function REQUIERED for your plugin <br>
 /// Pass in (without quotations) the name of your plugin<br>
 /// <br>
-/// If this name is not set, then the name of the binary is used
+/// 
 #[proc_macro]
-pub fn plugin_name(input: TokenStream) -> TokenStream {
+pub fn plugin_descriptor(input: TokenStream) -> TokenStream {
 
     let plugin_name = input.to_string();
     
     quote! {
 #[no_mangle]
-pub extern "C" fn get_plugin_name() -> *mut std::os::raw::c_char {
+pub extern "C" fn get_plugin_description() -> *mut std::os::raw::c_char {
     let c_str = std::ffi::CString::new(#plugin_name).unwrap();
     c_str.into_raw()
 }
+    }.into_token_stream().into()
+}
 
+/// Generates the free_string function REQUIRED for your plugin <br>
+/// Purpose of this function is to deallocate strings allocated by this plugin <br>
+/// This standard definition should be sufficient for most use-cases
+#[proc_macro]
+pub fn free_string(_input: TokenStream) -> TokenStream {
+    quote! {
+        
 #[no_mangle]
-pub extern "C" fn free_plugin_name(ptr: *mut std::os::raw::c_char) {
+pub extern "C" fn free_string(ptr: *mut std::os::raw::c_char) {
     unsafe {
         drop(std::ffi::CString::from_raw(ptr));
     }
 
 }
-    }.into_token_stream().into()
+    }.into_token_stream().into() 
 }
 
 /// Generates the update function REQUIRED for your plugin <br>

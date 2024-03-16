@@ -2,7 +2,17 @@ use datarace_plugin_api_wrapper::wrappers::{DataStoreReturnCode, Message, Plugin
 use datarace_plugin_api_wrapper::api;
 
 // TODO: Implement get_plugin_name and free_plugin_name
-datarace_plugin_api_wrapper::macros::plugin_name!(sample_plugin);
+datarace_plugin_api_wrapper::macros::free_string!();
+
+#[no_mangle]
+pub extern "C" fn get_plugin_description() -> datarace_plugin_api_wrapper::reexport::PluginDescription {
+    datarace_plugin_api_wrapper::reexport::PluginDescription {
+        id: 2,
+        name: std::ffi::CString::new("sample_plugin").expect("string is string").into_raw(),
+        version: [0,0,1],
+        api_version: 0,
+    }
+}
 
 // This generates the extern func, while also wrapping the types
 datarace_plugin_api_wrapper::macros::init_fn!(handle_init);
@@ -12,14 +22,14 @@ datarace_plugin_api_wrapper::macros::init_fn!(handle_init);
 // it takes a PluginHandle
 fn handle_init(handle: PluginHandle) -> Result<(),String> {
     match api::create_property(&handle, "Test", Property::Int(5)) {
-        Ok(prop_handle) => {
-            let v = api::get_property_value(&handle, &prop_handle).unwrap();
-            api::log_info(&handle, format!("{}", match v { Property::Int(i) => i.to_string(), _ => "NAN".to_string() }));
+        DataStoreReturnCode::Ok => {
+            // let v = api::get_property_value(&handle, &prop_handle).unwrap();
+            // api::log_info(&handle, format!("{}", match v { Property::Int(i) => i.to_string(), _ => "NAN".to_string() }));
         },
-        Err(e) => api::log_error(&handle, e)
+        e => api::log_error(&handle, e)
     };
 
-    match api::get_property_handle(&handle, "sample_plugin.Test") {
+    match api::generate_property_handle(&handle, "sample_plugin.Test") {
         Ok(prop_handle) => {
             api::subscribe_property(&handle, &prop_handle);
 

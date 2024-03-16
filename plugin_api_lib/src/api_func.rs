@@ -1,9 +1,7 @@
-use std::mem::ManuallyDrop;
-
 use libc::c_char;
 use log::error;
 
-use crate::{pluginloader, utils, DataStoreReturnCode, Message, MessageType, PluginHandle, Property, PropertyHandle, ReturnValue};
+use crate::{pluginloader, utils, DataStoreReturnCode, Message, MessageType, PluginDescription, PluginHandle, Property, PropertyHandle, ReturnValue, API_VERSION};
 
 
 macro_rules! get_handle {
@@ -48,7 +46,15 @@ macro_rules! get_string {
             msg
         } else {
             error!("Passed in String Corrupt");
-            return ReturnValue::from(Err(DataStoreReturnCode::DataCorrupted));
+            return ReturnValue::from(Err(DataStoreReturnCode::ParameterCorrupted));
+        }
+    };
+    ($ptr:ident, $re: expr) => {
+        if let Some(msg) = utils::get_string($ptr) {
+            msg
+        } else {
+            error!("Passed in String Corrupt");
+            return $re;
         }
     };
 }
@@ -59,18 +65,13 @@ macro_rules! get_string {
 /// Also the initial value set the datatype, you can only use this type when calling update 
 /// you need to call change_property_type to change this type
 #[no_mangle]
-pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, value: Property) -> ReturnValue<PropertyHandle> {
-    let han = get_handle_val!(handle);
-    let msg = get_string!(name);
+pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, value: Property) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let msg = get_string!(name, DataStoreReturnCode::ParameterCorrupted);
 
-    // This is shitty, but this is hopefully a decent stopgap
-    let res = futures::executor::block_on(async {
-        let mut ds = han.datastore.write().await;
-        ds.create_property(&han.token, msg, utils::Value::new(value)).await
-    });
-    
-    
-    ReturnValue::from(res) 
+    // TODO
+
+    DataStoreReturnCode::NotImplemented
 }
 
 /// Updates the value for the Property behind a given handle
@@ -80,52 +81,47 @@ pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, 
 #[no_mangle]
 pub extern  "C" fn update_property(handle: *mut PluginHandle, prop_handle: PropertyHandle, value: Property) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
-    
-    let res = futures::executor::block_on(async {
-        let ds = han.datastore.read().await;
-        ds.update_property(&han.token, &prop_handle, utils::Value::new(value)).await
-    });
 
-    res
+    let val = utils::Value::new(value);
+    
+
+    DataStoreReturnCode::NotImplemented
 }
 
-/// Returns the value for a given property handle
+/// Returns the value for a given property handle that you previously subscribed to
 /// 
-/// This function is not as performant as subscribing to the property (especially for Strings),
-/// but if you rarely poll this value then the overhead from this function is likely small enough
 #[no_mangle]
 pub extern "C" fn get_property_value(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> ReturnValue<Property> {
     let han = get_handle_val!(handle);
 
-    let res = futures::executor::block_on(async {
-        let ds = han.datastore.read().await;
-        ds.get_property(&prop_handle).await
-    });
+    // let res = futures::executor::block_on(async {
+    //     let ds = han.datastore.read().await;
+    //     ds.get_property(&prop_handle).await
+    // });
+    //
+    // ReturnValue::from(match res {
+    //     Ok(val) => {
+    //         Property::try_from(val)
+    //     },
+    //     Err(e) => Err(e)
+    // })
 
-    ReturnValue::from(match res {
-        Ok(val) => {
-            Property::try_from(val)
-        },
-        Err(e) => Err(e)
-    })
+    ReturnValue::from(Err(DataStoreReturnCode::NotImplemented))
 }
 
-/// Retrieves the PropertyHandle for a certain name
+/// Generates the PropertyHandle for a certain name
 /// 
 /// Similar to create_property, it is your job to deallocate the nullterminating string
-/// It is adviced you store this PropertyHandle to avoid the penalty from having to request a new one for every API call
-/// PropertyHandles can become outdated (when a property is renamed or deleted), then a new one has to be requested
+/// It is advisable to generate these PropertyHandles at Compile time where possible to avoid
+/// having to allocate and deallocate a string
 #[no_mangle]
-pub extern "C" fn get_property_handle(handle: *mut PluginHandle, name: *mut c_char) -> ReturnValue<PropertyHandle> {
+pub extern "C" fn generate_property_handle(handle: *mut PluginHandle, name: *mut c_char) -> ReturnValue<PropertyHandle> {
+    // TODO rename this function to generate
     let han = get_handle_val!(handle);
     let msg = get_string!(name);
-
-    let res = futures::executor::block_on(async {
-        let ds = han.datastore.read().await;
-        ds.get_property_handle(msg)
-    });
-
-    ReturnValue::from(res)
+    
+    
+    ReturnValue::from(Err(DataStoreReturnCode::NotImplemented))
 }
 
 /// Deletes a certain property based on the Handle
@@ -133,28 +129,17 @@ pub extern "C" fn get_property_handle(handle: *mut PluginHandle, name: *mut c_ch
 pub extern "C" fn delete_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
-    let res = futures::executor::block_on(async {
-        let mut ds = han.datastore.write().await;
-        ds.delete_property(&han.token, &prop_handle).await
-    });
-    res
+    DataStoreReturnCode::NotImplemented
 }
 
-/// Subscribes you to a property, this will allow you to receive messages whenever this value
-/// changes (sort of). Values are gathered leveraging the async runtime, so this is preferable over
-/// polling manually via get_property_value.
-///
-/// If the type is a string you will receive a message for each time the value is updated
-/// However all other types are polled by the pluginmanager, with messages send when at least one
-/// changed. This means there is no guarantee that you will see all values.
-/// Polling manually does not garantee this either
+/// Subscribes you to a property, allowing fast access through get_property_value
 #[no_mangle]
 pub extern "C" fn subscribe_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
     let res = futures::executor::block_on(async {
-        let mut ds = han.datastore.write().await;
-        ds.subscribe_to_property(&han.token, &prop_handle).await
+        let mut ds = han.datastore.read().await;
+        DataStoreReturnCode::NotImplemented
     });
     res
 }
@@ -168,8 +153,8 @@ pub extern "C" fn unsubscribe_property(handle: *mut PluginHandle, prop_handle: P
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
     let res = futures::executor::block_on(async {
-        let mut ds = han.datastore.write().await;
-        ds.unsubscribe_from_property(&han.token, &prop_handle).await
+        let mut ds = han.datastore.read().await;
+        DataStoreReturnCode::NotImplemented
     });
     res
 }
@@ -217,36 +202,59 @@ fn log_plugin_msg(handle: *mut PluginHandle, message: *mut c_char, log_level: lo
 pub extern "C" fn reenqueue_message(handle: *mut PluginHandle, msg: Message) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
     
-    // need to reencode Message
-    let re_coded = match msg.sort {
-        MessageType::Update => {
-            unsafe {
-                let mut msg = msg;
-                let up = ManuallyDrop::into_inner(std::mem::take(&mut msg.value.update));
+    // // need to reencode Message
+    // let re_coded = match msg.sort {
+    //     MessageType::Update => {
+    //         unsafe {
+    //             let mut msg = msg;
+    //             let up = ManuallyDrop::into_inner(std::mem::take(&mut msg.value.update));
+    //
+    //             pluginloader::Message::Update(up.handle, utils::Value::new(up.value))
+    //         }
+    //     },
+    //     MessageType::Removed => {
+    //         unsafe {
+    //             let handle = msg.value.removed_property;
+    //             pluginloader::Message::Removed(handle)
+    //         }
+    //     }
+    // };
+    //
+    // // we have to retrieve this plugins channel
+    // let res = futures::executor::block_on(async {
+    //     let ds = han.datastore.read().await;
+    //     if let Some(chan) = ds.get_plugin_channel(&han.name).await {
+    //         if chan.send(re_coded).await.is_ok() {
+    //             DataStoreReturnCode::Ok
+    //         } else {
+    //             DataStoreReturnCode::DoesNotExist
+    //         }
+    //     } else {
+    //         DataStoreReturnCode::NotAuthenticated
+    //     }
+    // });
+    // res
+    DataStoreReturnCode::NotImplemented
+}
 
-                pluginloader::Message::Update(up.handle, utils::Value::new(up.value))
-            }
-        },
-        MessageType::Removed => {
-            unsafe {
-                let handle = msg.value.removed_property;
-                pluginloader::Message::Removed(handle)
-            }
-        }
-    };
-
-    // we have to retrieve this plugins channel
-    let res = futures::executor::block_on(async {
-        let ds = han.datastore.read().await;
-        if let Some(chan) = ds.get_plugin_channel(&han.name).await {
-            if chan.send(re_coded).await.is_ok() {
-                DataStoreReturnCode::Ok
-            } else {
-                DataStoreReturnCode::DoesNotExist
-            }
-        } else {
-            DataStoreReturnCode::NotAuthenticated
-        }
+/// This returns the descriptor of our plugin <br>
+/// There is a string contained, requiring deallocation
+/// 
+/// Part of the point of this function is so the PluginDescription type is included in the generated header
+#[no_mangle]
+pub extern "C" fn get_description(handle: *mut PluginHandle) -> PluginDescription {
+    let han = get_handle!(handle, PluginDescription {
+        id: 0,
+        name: std::ptr::null_mut(),
+        version: [0,0,0],
+        api_version: API_VERSION,
     });
-    res
+
+    
+    PluginDescription {
+        id: han.id,
+        name: std::ffi::CString::new(han.name.clone()).expect("string is string").into_raw(),
+        version: [0,0,0],
+        api_version: API_VERSION,
+    }
 }

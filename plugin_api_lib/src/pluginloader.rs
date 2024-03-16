@@ -45,7 +45,7 @@ pub(crate) async fn load_all_plugins(datastore: &'static tokio::sync::RwLock<Dat
 macro_rules! send_update {
     ($wrapper:ident, $ptr_h:ident, $msg: ident) => {
         if let Ok(msg) = api_types::Message::try_from($msg) {
-            if $wrapper.func.update($ptr_h.ptr, msg) != 0 {
+            if $wrapper.update($ptr_h.ptr, msg) != 0 {
                 error!("Plugin {} failed on update", get_plugin_name(&$ptr_h));
                 break;
             }     
@@ -59,113 +59,119 @@ macro_rules! send_update {
 async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataStore>) {
     if let Ok(wrapper) = unsafe { Container::<PluginWrapper>::load(path.to_str().unwrap()) } {
         // Preperations
-        let name = if let Some(ref name_handle) = wrapper.name {
-            let ptr = name_handle.get_plugin_name();
-            let n = utils::get_string(ptr).clone();
-            
-            name_handle.free_plugin_name(ptr);
+        let desc = wrapper.get_plugin_description();
 
+        let name = if let Some(n) = utils::get_string(desc.name) {
+            wrapper.free_string(desc.name);
             n
         } else {
-            None
+            error!("Unable to parse plugin name, id {}", desc.id);
+            wrapper.free_string(desc.name);
+            return;
         };
 
-        let name = if let Some(name) = name {
-            name
-        } else {
-            path.file_stem().unwrap().to_str().unwrap().to_string()
-        };
+        if desc.api_version != crate::API_VERSION {
+            // Missmatched API Version
+            error!("Missmatched api version for plugin {}, will not be launched: Build for api {} (DataRace is running on {})", name.as_str(), desc.api_version, crate::API_VERSION);
+            return;
+        }
 
+        // Verifying ID is generated correctly with hash
+        // TODO
+        let id = desc.id;
+
+        // TODO use version number
+
+        drop(desc); // drop is importantent, name ptr is pointing at freed memory
+        
+
+        // Creates PluginHandle
+        let handle = PluginHandle::new(name, id, datastore);
+        let ptr_h = PtrWrapper { ptr: Box::into_raw(Box::new(handle)) };
+        let (sender, receiver) = utils::get_message_channel();
 
         let mut w_store = datastore.write().await;
-        let (token, reciever, sender) = if let Some(v) = w_store.create_plugin(name.clone()) {
-            v
-        } else if w_store.get_shutdown_status() {
-            error!("Unable to register Plugin {}, shut down already in progress", name);
+        if w_store.register_plugin(id, sender.clone(), ptr_h.ptr).is_none() {
+            if w_store.get_shutdown_status() {
+                error!("Unable to register Plugin {}, shut down already in progress", get_plugin_name(&ptr_h));
+                return;
+            }
+
+            error!("Unable to register Plugin {}, name collision", get_plugin_name(&ptr_h));
             return;
-        } else {
-            error!("Unable to register Plugin {}, name collision", name);
-            return;
-        };
+        }
         drop(w_store);
 
-        let handle = PluginHandle { name, datastore, token: token.clone() };
-        let ptr_h = PtrWrapper { ptr: Box::into_raw(Box::new(handle)) };
-
         // Initializing
-        if wrapper.func.init(ptr_h.ptr) != 0 {
+        if wrapper.init(ptr_h.ptr) != 0 {
             // None Zero Error Code, shut down
             error!("Plugin {} failed to initialize", get_plugin_name(&ptr_h));
             return;
         }
 
-        let async_rec = reciever.to_async();
-
-
-        // Main Run loop
-        let mut poller = tokio::spawn(store_list(vec![], vec![]));
+        let async_rec = receiver.to_async();
 
         // let _ = sender.as_async().send(Message::Polled).await;
         while let Ok(msg) = async_rec.recv().await {
             match msg {
                 Message::Shutdown => break,
                 Message::Subscribe(prop_handle) => {
-                    // We will finish the polling so we add this prop handle to the list, then let
-                    // the list be stored dormant in a task till needed
-                    let (mut list, changed) = poller.await.unwrap();
-
-                    if list.len() == 0 {
-                        // To start the polling task proper
-                        let _ = sender.as_async().send(Message::Polled).await;
-                    }
-
-                    // Making sure we don't subscribe to it twice
-                    let mut is_present = false;
-                    for (old_prop_handle, _) in list.iter() {
-                        if old_prop_handle == &prop_handle {
-                            is_present = true;
-                            break;
-                        }
-                    }
-                    
-                    if !is_present {
-                        list.push((prop_handle, Value::None));
-                    }
-                    
-                    poller = tokio::spawn(store_list(list, changed))
+                    // // We will finish the polling so we add this prop handle to the list, then let
+                    // // the list be stored dormant in a task till needed
+                    // let (mut list, changed) = poller.await.unwrap();
+                    //
+                    // if list.len() == 0 {
+                    //     // To start the polling task proper
+                    //     let _ = sender.as_async().send(Message::Polled).await;
+                    // }
+                    //
+                    // // Making sure we don't subscribe to it twice
+                    // let mut is_present = false;
+                    // for (old_prop_handle, _) in list.iter() {
+                    //     if old_prop_handle == &prop_handle {
+                    //         is_present = true;
+                    //         break;
+                    //     }
+                    // }
+                    // 
+                    // if !is_present {
+                    //     list.push((prop_handle, Value::None));
+                    // }
+                    // 
+                    // poller = tokio::spawn(store_list(list, changed))
                 },
                 Message::Unsubscribe(prop_handle) => {
-                    let (mut list, changed) = poller.await.unwrap();
-
-                    let mut index = 0;
-                    while let Some((han, _)) = list.get(index) {
-                        if han.index == prop_handle.index && han.hash == prop_handle.hash {
-                            break;
-                        }
-                        index += 1;
-                    }
-
-                    if index < list.len() {
-                        list.remove(index);
-                    }
-
-                    poller = tokio::spawn(store_list(list, changed))
+                    // let (mut list, changed) = poller.await.unwrap();
+                    //
+                    // let mut index = 0;
+                    // while let Some((han, _)) = list.get(index) {
+                    //     if han.index == prop_handle.index && han.hash == prop_handle.hash {
+                    //         break;
+                    //     }
+                    //     index += 1;
+                    // }
+                    //
+                    // if index < list.len() {
+                    //     list.remove(index);
+                    // }
+                    //
+                    // poller = tokio::spawn(store_list(list, changed))
                 },
                 Message::Polled => {
-                    let (list, changed) = poller.await.unwrap();
-                    
-                    for (prop_handle, value) in changed {
-                        let msg = Message::Update(prop_handle, value);
-                        send_update!(wrapper, ptr_h, msg);
-                    }
-
-                    // changed.clear();
-                    let changed = vec![];
-                    poller = if list.len() == 0 {
-                        tokio::spawn(store_list(list, changed))
-                    } else {
-                        tokio::spawn(poll_propertys(datastore, list, changed, sender.clone()))
-                    };
+                    // let (list, changed) = poller.await.unwrap();
+                    // 
+                    // for (prop_handle, value) in changed {
+                    //     let msg = Message::Update(prop_handle, value);
+                    //     send_update!(wrapper, ptr_h, msg);
+                    // }
+                    //
+                    // // changed.clear();
+                    // let changed = vec![];
+                    // poller = if list.len() == 0 {
+                    //     tokio::spawn(store_list(list, changed))
+                    // } else {
+                    //     tokio::spawn(poll_propertys(datastore, list, changed, sender.clone()))
+                    // };
                 },
                 Message::Update(prop_handle, value) => {
                     let msg = Message::Update(prop_handle, value);
@@ -181,72 +187,18 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
 
 
         // End of life
+        let name = get_plugin_name(&ptr_h);
         let mut w_store = datastore.write().await;
-        if DataStoreReturnCode::Ok != w_store.delete_plugin(&token).await {
-            error!("Plugin {} failed to shutdown properly", get_plugin_name(&ptr_h));
+        if DataStoreReturnCode::Ok != w_store.delete_plugin(id).await {
+            error!("Plugin {} failed to shutdown properly", name);
         } else {
-            info!("Plugin {} stopped", get_plugin_name(&ptr_h));
+            info!("Plugin {} stopped", name);
         }
         drop(w_store);
-
-
-        // Should we deallocate the PluginHandle?
-        // Well, the Plugin should have stopped any threads it has, all calls it does have ceased,
-        // so we should be in the clear
-        unsafe {
-            drop(Box::from_raw(ptr_h.ptr));
-        }
-
         
     } else {
         debug!("Unable to load {} as a plugin", path.to_str().unwrap());
     }
-}
-
-async fn poll_propertys(
-    datastore: &'static tokio::sync::RwLock<DataStore>,
-    mut list: Vec<(PropertyHandle, Value)>,
-    mut changed: Vec<(PropertyHandle, Value)>,
-    sender: Sender<Message>
-) -> (Vec<(PropertyHandle, Value)>,Vec<(PropertyHandle, Value)>) {
-    let ds = datastore.read().await;
-
-    changed.clear();
-    
-    let mut index = 0;
-    while let Some((handle, last_value)) = list.get_mut(index) {
-        match ds.get_property(handle).await {
-            Ok(res) => {
-                if res != *last_value {
-                    // Value changed
-                    changed.push((handle.clone(), res.clone()));
-                    *last_value = res;
-                }
-            },
-            Err(DataStoreReturnCode::OutdatedPropertyHandle) => {
-                // we need to send a message that this property got lost
-                let _ = sender.as_async().send(Message::Removed(handle.clone())).await;
-
-                list.remove(index); // We will remove this item
-
-                // We have to re-iterate over the item on this index,
-                // as all items got moved forward
-                index -= 1; 
-            },
-            Err(_) => () // this should not happen
-        }
-        index += 1;
-    }
-
-    let _ = sender.as_async().send(Message::Polled).await;
-
-    (list,changed)
-}
-
-/// Serves to temporarily store the list within a joinhandle
-/// this is used when no subscriptions exist, or when subscribing to a new property
-async fn store_list(list: Vec<(PropertyHandle, Value)>, changed: Vec<(PropertyHandle, Value)>) -> (Vec<(PropertyHandle, Value)>, Vec<(PropertyHandle, Value)>) {
-    (list,changed)
 }
 
 // We have to do this, as you can otherwise not await anything
@@ -266,22 +218,12 @@ fn get_plugin_name(ptr: &PtrWrapper) -> String {
     "unknown".to_string()
 }
 
-#[derive(WrapperMultiApi)]
+#[derive(WrapperApi)]
 pub struct PluginWrapper {
-    name: Option<PluginNameWrapper>,
-    func: PluginFuncWrapper
-}
-
-#[derive(WrapperApi)]
-struct PluginNameWrapper {
-    get_plugin_name: extern "C" fn() -> *mut libc::c_char,
-    free_plugin_name: extern "C" fn(ptr: *mut libc::c_char),
-}
-
-#[derive(WrapperApi)]
-struct PluginFuncWrapper {
+    get_plugin_description: extern "C" fn() -> api_types::PluginDescription,
+    free_string: extern "C" fn(ptr: *mut libc::c_char),
     init: extern "C" fn(handle: *mut PluginHandle) -> libc::c_int,
-    update: extern "C" fn(handle: *mut PluginHandle, msg: api_types::Message) -> libc::c_int
+    update: extern "C" fn(handle: *mut PluginHandle, msg: api_types::Message) -> libc::c_int,
 }
 
 // Sketchup of what Message will internally become
