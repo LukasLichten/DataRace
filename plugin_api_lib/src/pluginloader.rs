@@ -70,12 +70,17 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
             return;
         };
 
+        if desc.api_version == u64::MAX {
+            // Missmatched API Version
+            error!("API version must be set at compiletime of your plugin ({}), requesting a API Version from the library during runtime will only return u64::MAX (DataRace is running on api version {})",
+                name.as_str(), crate::API_VERSION);
+            return;
+        }
         if desc.api_version != crate::API_VERSION {
             // Missmatched API Version
             error!("Missmatched api version for plugin {}, will not be launched: Build for api {} (DataRace is running on {})", name.as_str(), desc.api_version, crate::API_VERSION);
             return;
         }
-
         // Verifying ID is generated correctly with hash
         // TODO
         let id = desc.id;
@@ -106,6 +111,7 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
         if wrapper.init(ptr_h.ptr) != 0 {
             // None Zero Error Code, shut down
             error!("Plugin {} failed to initialize", get_plugin_name(&ptr_h));
+            // Remove Plugin again from pluginstore
             return;
         }
 

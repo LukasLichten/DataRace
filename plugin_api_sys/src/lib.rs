@@ -34,3 +34,6 @@ pub use bindings::{PluginHandle,PluginDescription};
 
 // ReturnValues
 pub use bindings::{ReturnValue_PropertyHandle, ReturnValue_Property};
+
+// Compiletime
+pub use bindings::compiletime_get_api_version;

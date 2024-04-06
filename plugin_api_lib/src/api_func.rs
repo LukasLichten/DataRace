@@ -258,3 +258,12 @@ pub extern "C" fn get_description(handle: *mut PluginHandle) -> PluginDescriptio
         api_version: API_VERSION,
     }
 }
+
+/// It is the proper way to let every library deallocate memory it allocated.
+/// So this function is provided to allow you to deallocate strings the API passed to you
+#[no_mangle]
+pub extern "C" fn deallocate_string(ptr: *mut libc::c_char) {
+    unsafe {
+        drop(std::ffi::CString::from_raw(ptr))
+    }
+}

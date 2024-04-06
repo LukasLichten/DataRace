@@ -1,5 +1,6 @@
 use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
+use syn::{parse::{Parse, ParseStream}, parse_macro_input, LitInt, LitStr, Token};
 
 /// Generates the init function REQUIRED for your plugin <br>
 /// Pass in the name of your function that will handle the startup<br>
@@ -39,21 +40,60 @@ pub extern "C" fn init(handle: *mut datarace_plugin_api_wrapper::reexport::Plugi
     }.into_token_stream().into()
 }
 
+struct DescriptorTokens {
+    plugin_name: LitStr,
+    version_major: LitInt,
+    version_minor: LitInt,
+    version_patch: LitInt
+}
+
+impl Parse for DescriptorTokens {
+    fn parse(input: ParseStream) -> syn::parse::Result<Self> {
+        let plugin_name: LitStr = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let version_major: LitInt = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let version_minor: LitInt = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let version_patch: LitInt = input.parse()?;
+
+        Ok(DescriptorTokens {
+            plugin_name,
+            version_major,
+            version_minor,
+            version_patch
+        })
+    }
+}
 
 /// Generates the get_plugin_description function REQUIERED for your plugin <br>
-/// Pass in (without quotations) the name of your plugin<br>
-/// <br>
-/// 
+/// Pass in the name of your plugin, version major, version minor, version patch
 #[proc_macro]
-pub fn plugin_descriptor(input: TokenStream) -> TokenStream {
+pub fn plugin_descriptor_fn(input: TokenStream) -> TokenStream {
+    let DescriptorTokens {
+        plugin_name,
+        version_major,
+        version_minor,
+        version_patch
+    } = parse_macro_input!(input as DescriptorTokens);
 
-    let plugin_name = input.to_string();
+    let api_version = unsafe {
+        datarace_plugin_api_sys::compiletime_get_api_version()
+    };
     
+    // TODO compiletime id generation
+    let _plugin_name_str = plugin_name.value();
+    let id = 2_u64; 
+
     quote! {
 #[no_mangle]
-pub extern "C" fn get_plugin_description() -> *mut std::os::raw::c_char {
-    let c_str = std::ffi::CString::new(#plugin_name).unwrap();
-    c_str.into_raw()
+pub extern "C" fn get_plugin_description() -> datarace_plugin_api_wrapper::reexport::PluginDescription {
+    datarace_plugin_api_wrapper::reexport::PluginDescription {
+        id: #id,
+        name: std::ffi::CString::new(#plugin_name).expect("string is string").into_raw(),
+        version: [#version_major, #version_minor, #version_patch],
+        api_version: #api_version,
+    }
 }
     }.into_token_stream().into()
 }
@@ -62,7 +102,7 @@ pub extern "C" fn get_plugin_description() -> *mut std::os::raw::c_char {
 /// Purpose of this function is to deallocate strings allocated by this plugin <br>
 /// This standard definition should be sufficient for most use-cases
 #[proc_macro]
-pub fn free_string(_input: TokenStream) -> TokenStream {
+pub fn free_string_fn(_input: TokenStream) -> TokenStream {
     quote! {
         
 #[no_mangle]

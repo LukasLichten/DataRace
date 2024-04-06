@@ -16,10 +16,17 @@ mod web;
 mod pluginloader;
 pub(crate) mod utils;
 
+static mut IS_RUNTIME: bool = false;
+
 /// Used by the main executable to start the programm
 /// Do NOT call this as a plugin
 #[no_mangle]
 pub extern "C" fn run() {
+    unsafe {
+        IS_RUNTIME = true;
+    }
+
+
     let log_level = log::LevelFilter::Debug;
     env_logger::builder().filter_level(log_level).init();
 
@@ -83,4 +90,19 @@ mod api_types;
 pub use api_func::*;
 pub use api_types::*;
 
-
+/// Do not call this function during runtime, it will return u64::MAX!
+/// It serves for compiletime macros to access the API Version
+///
+/// This function acts differently to prevent plugins from changing their API version after they
+/// were compiled.
+/// However it exists to allow retrieval of the API version against which you are compiling
+#[no_mangle]
+pub extern "C" fn compiletime_get_api_version() -> u64 {
+    if unsafe {
+        !IS_RUNTIME
+    } {
+        API_VERSION
+    } else {
+        u64::MAX
+    }
+}

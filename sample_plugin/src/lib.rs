@@ -1,18 +1,11 @@
 use datarace_plugin_api_wrapper::wrappers::{DataStoreReturnCode, Message, PluginHandle, Property};
 use datarace_plugin_api_wrapper::api;
 
-// TODO: Implement get_plugin_name and free_plugin_name
-datarace_plugin_api_wrapper::macros::free_string!();
+// This is requires to handle deallocating strings
+datarace_plugin_api_wrapper::macros::free_string_fn!();
 
-#[no_mangle]
-pub extern "C" fn get_plugin_description() -> datarace_plugin_api_wrapper::reexport::PluginDescription {
-    datarace_plugin_api_wrapper::reexport::PluginDescription {
-        id: 2,
-        name: std::ffi::CString::new("sample_plugin").expect("string is string").into_raw(),
-        version: [0,0,1],
-        api_version: 0,
-    }
-}
+// Generates the required plugin description
+datarace_plugin_api_wrapper::macros::plugin_descriptor_fn!("sample_plugin", 0, 0, 1);
 
 // This generates the extern func, while also wrapping the types
 datarace_plugin_api_wrapper::macros::init_fn!(handle_init);
