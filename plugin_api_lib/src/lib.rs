@@ -106,3 +106,40 @@ pub extern "C" fn compiletime_get_api_version() -> u64 {
         u64::MAX
     }
 }
+
+#[repr(C)]
+pub struct PluginNameHash {
+    pub id: u64,
+    pub valid: bool
+}
+
+/// Do not call this function during runtime, it will return (id: 0, valid: false)!
+/// It serves for compiletime macros to generate the plugin id from the plugin_hash
+///
+/// This function acts differently to prevent plugins from changing their id during runtime (and
+/// invalidating their compiletime propertyhandles).
+/// Although you can aquire this id from a get_propertyhandle request... Just please don't
+///
+/// This function also checks if the name does not contain any invalid characters (currently only .)
+///
+/// The cstring pointer has to be deallocated by you.
+#[no_mangle]
+pub extern "C" fn compiletime_get_plugin_name_hash(ptr: *mut libc::c_char) -> PluginNameHash {
+    if unsafe {
+        IS_RUNTIME
+    } {
+        return PluginNameHash { id: 0, valid: false };
+    }
+
+    if let Some(str) = utils::get_string(ptr) {
+        let str = str.to_lowercase();
+        if let Some(val) = utils::generate_plugin_name_hash(str.as_str()) {
+            PluginNameHash { id: val, valid: true }    
+        } else {
+            PluginNameHash { id: 0, valid: false }
+        }
+
+    } else {
+        PluginNameHash { id: 0, valid: false }
+    }
+}

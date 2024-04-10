@@ -12,6 +12,7 @@ bindgen = "^0.69"
 
 [features]
 main-entry = []
+compile = []
 
 [dependencies]
 libc = "0.2"

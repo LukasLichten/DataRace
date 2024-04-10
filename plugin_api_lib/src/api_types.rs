@@ -41,6 +41,9 @@ pub enum DataStoreReturnCode {
 
 }
 
+/// A Descriptor for the plugin, used to aquire meta data (name/version),
+/// but also to check compatibility (api_version and id)
+/// api_version and id should be values generated at compiletime
 #[repr(C)]
 pub struct PluginDescription {
     pub name: *mut c_char,
@@ -71,6 +74,18 @@ pub struct PropertyHandle {
 impl Default for PropertyHandle {
     fn default() -> Self {
         PropertyHandle { plugin: 0, property: 0 }
+    }
+}
+
+impl PropertyHandle {
+    pub(crate) fn new(str: &str) -> Option<Self> {
+        // let str = str.to_lowercase();
+        let mut split = str.splitn(2, '.');
+
+        let plugin_name = split.next()?;
+        let prop_name = split.next()?.trim_matches('.');
+
+        Some(Self { plugin: utils::generate_plugin_name_hash(plugin_name)?, property: 0 })
     }
 }
 

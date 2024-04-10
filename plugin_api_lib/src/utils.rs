@@ -1,6 +1,7 @@
 use libc::c_char; 
 use std::{ffi::{CStr, CString}, sync::{Arc, atomic::{AtomicU64, AtomicI64, AtomicBool, Ordering}}};
 use kanal::{Sender, AsyncSender, Receiver};
+use highway::{HighwayHash, HighwayHasher, Key};
 
 use tokio::sync::Mutex;
 
@@ -168,3 +169,18 @@ impl Value {
     }
 }
 
+const HASH_KEY_NAME:Key = Key([1,2,3,4]);
+
+/// Serves to generate hashes for the name of a plugin
+pub(crate) fn generate_plugin_name_hash(str: &str) -> Option<u64> {
+    if str.contains('.') {
+        return None;
+    }
+    let str = str.to_lowercase();
+
+    let mut hasher = HighwayHasher::new(HASH_KEY_NAME);
+
+    hasher.append(str.as_bytes());
+
+    Some(hasher.finalize64())
+}

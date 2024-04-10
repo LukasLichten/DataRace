@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use quote::{quote, ToTokens};
+use quote::{quote, quote_spanned, ToTokens};
 use syn::{parse::{Parse, ParseStream}, parse_macro_input, LitInt, LitStr, Token};
 
 /// Generates the init function REQUIRED for your plugin <br>
@@ -82,8 +82,21 @@ pub fn plugin_descriptor_fn(input: TokenStream) -> TokenStream {
     };
     
     // TODO compiletime id generation
-    let _plugin_name_str = plugin_name.value();
-    let id = 2_u64; 
+    let plugin_name_str = plugin_name.value();
+    let id = unsafe {
+        let ptr = std::ffi::CString::new(plugin_name_str).expect("plugin name can not be converted into CString").into_raw();
+        let res = datarace_plugin_api_sys::compiletime_get_plugin_name_hash(ptr);
+
+        drop(std::ffi::CString::from_raw(ptr));
+
+        if !res.valid {
+            return quote_spanned! {
+                plugin_name.span() => compile_error!("invalid plugin name")
+            }.into_token_stream().into();
+        }
+
+        res.id
+    };
 
     quote! {
 #[no_mangle]
