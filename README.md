@@ -31,6 +31,20 @@ More info found here: [rust-bindgen/requirements](https://rust-lang.github.io/ru
 
 ### Plugin Build Instructions
 *TODO*
+#### Dealing with `ProcMacro not expanded` lint
+This is a false positive, as the programm will still compile.  
+This happens due to the wrapper_macro crate (which you access through `datarace_plugin_api_wrapper::macros::*`)
+also depending on `plugin_api_sys`, as it accesses the library during compiletime to define values (such as apiversion and name hashes).  
+There are two issues:  
+First, rust_analyer will make use of Debug mode, we usually compile in Release,
+so `libdatarace_plugin_api.so` does not exist (and it can't know that it could just compile it into existence), so `plugin_api_sys` fails to compile,
+`wrapper_macro` fails to compile, and we get `no proc macro present for crate`.  
+Second, even if you compile the lib in debug it will now fail with a new error. This one is due to the `wrapper_macro` being turned into a `.so`,
+and when rust_analyzer tries to invoke it the `libdatarace_plugin_api.so` (to which it links) can not be found, as while it is in the same folder,
+Linux links only to libraries in very specific places such as `/usr/lib`. A fix would be to place a version of `libdatarace_plugin_api.so` in there.  
+  
+As such I will stamp this off as a development only problem, once (in the far far future, humaity has colonized the galaxy...) this has a released version,
+available through package managers, this should be a none issue for plugin devs, as it would just build & runtime link to the version installed on their system
 
 ### Project Build Instrutions
 #### Linux:
