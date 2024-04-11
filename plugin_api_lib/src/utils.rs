@@ -184,3 +184,20 @@ pub(crate) fn generate_plugin_name_hash(str: &str) -> Option<u64> {
 
     Some(hasher.finalize64())
 }
+
+
+const HASH_KEY_PROPERTY:Key = Key([2,4,3,4]);
+
+/// Serves to generate hashes for the name of a plugin
+pub(crate) fn generate_property_name_hash(str: &str) -> Option<u64> {
+    if str.strip_suffix('.').is_some() || str.strip_prefix('.').is_some() {
+        return None;
+    }
+    let str = str.to_lowercase();
+
+    let mut hasher = HighwayHasher::new(HASH_KEY_PROPERTY);
+
+    hasher.append(str.as_bytes());
+
+    Some(hasher.finalize64())
+}

@@ -85,15 +85,21 @@ pub fn get_property_value(handle: &PluginHandle, prop_handle: &PropertyHandle) -
     Ok(Property::new(res.value))
 }
 
-/// Retrieves the PropertyHandle used for reading and updating values
+/// Generates the PropertyHandle used for reading and updating values
 /// 
-/// It is highly adviced you store this value, as retrieving a new handle for every api call is very expensive
-/// PropertyHandles can become invalid (if for example a property gets renamed or deleted), then a new one has to be requested
-pub fn generate_property_handle<S: ToString>(handle: &PluginHandle, name: S) -> Result<PropertyHandle, DataStoreReturnCode> {
+/// Preferrably you use the `crate::macros::generate_property_handle!()` macro to generate this
+/// handle at compiletime, which allows you to cut down on overhead.
+/// But in case of dynmaics where the name of the property could change this function is better,
+/// but still, it is highly adviced you store this value
+///
+/// Property names are not case sensitive, have to contain at least one dot, with the first dot
+/// deliminating between plugin and property (but the property part can contain further dots).
+/// You can not have any leading or trailing dots
+pub fn generate_property_handle<S: ToString>(name: S) -> Result<PropertyHandle, DataStoreReturnCode> {
     let name_ptr = create_cstring!(name);
 
     let res = unsafe {
-        sys::generate_property_handle(handle.get_ptr(), name_ptr)
+        sys::generate_property_handle(name_ptr)
     };
     drop_cstring!(name_ptr);
 

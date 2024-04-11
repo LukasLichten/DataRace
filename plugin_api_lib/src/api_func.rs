@@ -113,15 +113,19 @@ pub extern "C" fn get_property_value(handle: *mut PluginHandle, prop_handle: Pro
 /// 
 /// Similar to create_property, it is your job to deallocate the nullterminating string
 /// It is advisable to generate these PropertyHandles at Compile time where possible to avoid
-/// having to allocate and deallocate a string
+/// having to allocate and deallocate a string.
+///
+/// It is a good idea to use compile time macros (if your language supports them) to generate the
+/// handles during compiletime. This allows to cut down on runtime overhead from calling this
+/// function (and other overhead from having to allocate memory to do so too)
 #[no_mangle]
-pub extern "C" fn generate_property_handle(handle: *mut PluginHandle, name: *mut c_char) -> ReturnValue<PropertyHandle> {
-    // TODO rename this function to generate
-    let han = get_handle_val!(handle);
+pub extern "C" fn generate_property_handle(name: *mut c_char) -> ReturnValue<PropertyHandle> {
     let msg = get_string!(name);
     
-    
-    ReturnValue::from(Err(DataStoreReturnCode::NotImplemented))
+    ReturnValue::from(
+        PropertyHandle::new(msg.as_str())
+        .ok_or(DataStoreReturnCode::ParameterCorrupted)
+    )
 }
 
 /// Deletes a certain property based on the Handle

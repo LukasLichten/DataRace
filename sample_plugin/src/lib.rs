@@ -22,8 +22,13 @@ fn handle_init(handle: PluginHandle) -> Result<(),String> {
         e => api::log_error(&handle, e)
     };
 
-    match api::generate_property_handle(&handle, "sample_plugin.Test") {
+    match api::generate_property_handle("sample_plugin.Test") {
         Ok(prop_handle) => {
+            dbg!(&prop_handle);
+
+            let prop_handle = datarace_plugin_api_wrapper::macros::generate_property_handle!("sample_plugin.test");
+            dbg!(&prop_handle);
+
             api::subscribe_property(&handle, &prop_handle);
 
             api::update_property(&handle, &prop_handle, Property::Int(1));

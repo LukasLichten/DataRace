@@ -33,7 +33,7 @@ pub enum DataStoreReturnCode {
     NotAuthenticated = 1,
     AlreadyExists = 2,
     DoesNotExist = 3,
-    OutdatedPropertyHandle = 4,
+    OutdatedPropertyHandle = 4, //  TODO: Remove handle
     TypeMissmatch = 5,
     NotImplemented = 6,
     ParameterCorrupted = 10, 
@@ -65,7 +65,7 @@ pub struct ReturnValue<T> {
 /// A Handle that serves for easy access to getting and updating properties
 /// These handles can (and should be where possible) generated at compile time
 #[repr(C)]
-#[derive(Clone,Copy,PartialEq,Hash)]
+#[derive(Clone,Copy,PartialEq,Hash,Debug)]
 pub struct PropertyHandle {
     pub plugin: u64,
     pub property: u64
@@ -79,13 +79,12 @@ impl Default for PropertyHandle {
 
 impl PropertyHandle {
     pub(crate) fn new(str: &str) -> Option<Self> {
-        // let str = str.to_lowercase();
         let mut split = str.splitn(2, '.');
 
         let plugin_name = split.next()?;
-        let prop_name = split.next()?.trim_matches('.');
+        let prop_name = split.next()?;
 
-        Some(Self { plugin: utils::generate_plugin_name_hash(plugin_name)?, property: 0 })
+        Some(Self { plugin: utils::generate_plugin_name_hash(plugin_name)?, property: utils::generate_property_name_hash(prop_name)? })
     }
 }
 

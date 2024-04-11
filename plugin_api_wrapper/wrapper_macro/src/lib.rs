@@ -68,6 +68,9 @@ impl Parse for DescriptorTokens {
 
 /// Generates the get_plugin_description function REQUIERED for your plugin <br>
 /// Pass in the name of your plugin, version major, version minor, version patch
+///
+/// Name of your plugin is case sensitive on log and other user facing displays, however for
+/// generation fo the plugin id (like in the PropertyHandle) it will be treated case insensitive
 #[proc_macro]
 pub fn plugin_descriptor_fn(input: TokenStream) -> TokenStream {
     let DescriptorTokens {
@@ -140,7 +143,6 @@ pub extern "C" fn free_string(ptr: *mut std::os::raw::c_char) {
 /// of this plugin.
 #[proc_macro]
 pub fn update_fn(input: TokenStream) -> TokenStream {
-
     let func_name = quote::format_ident!("{}", input.to_string());
     
     quote! {
@@ -164,5 +166,46 @@ pub extern "C" fn update(handle: *mut datarace_plugin_api_wrapper::reexport::Plu
         }
     }
 }
+    }.into_token_stream().into()
+}
+
+/// Generates a property handle at compiletime
+/// It will insert a PropertyHandle in this place
+///
+/// This is perfect for propertys with static values, as this cuts the need of sending a cstring
+/// and the api hashing it during runtime.
+/// But if you need dynamics, the function by the same name is a better choice (and you can store
+/// the results of that one too)
+///
+/// Property names are not case sensitive, have to contain at least one dot, with the first dot
+/// deliminating between plugin and property (but the property part can contain further dots).
+/// You can not have any leading or trailing dots
+#[proc_macro]
+pub fn generate_property_handle(input: TokenStream) -> TokenStream {
+    let name = parse_macro_input!(input as LitStr);
+
+    let name_val = name.value();
+    let handle = unsafe {
+        let ptr = std::ffi::CString::new(name_val).expect("name can not be converted into CString").into_raw();
+        let res = datarace_plugin_api_sys::generate_property_handle(ptr);
+
+        drop(std::ffi::CString::from_raw(ptr));
+
+        if res.code != datarace_plugin_api_sys::DataStoreReturnCode_Ok {
+            return quote_spanned! {
+                name.span() => compile_error!("invalid name")
+            }.into_token_stream().into();
+        }
+
+        res.value
+    };
+
+    let id = handle.plugin;
+    let prop = handle.property;
+
+    quote! {
+        unsafe {
+            datarace_plugin_api_wrapper::wrappers::PropertyHandle::from_values(#id, #prop)
+        }
     }.into_token_stream().into()
 }

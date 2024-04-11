@@ -21,7 +21,7 @@ impl PluginHandle {
     }
 }
 
-/// A Handle for accessing Property used when writing and reading
+/// A Handle for accessing Property used when writing, reading and subscribing
 #[derive(Debug, Clone)]
 pub struct PropertyHandle {
     inner: sys::PropertyHandle
@@ -34,6 +34,14 @@ impl PropertyHandle {
 
     pub(crate) fn get_inner(&self) -> sys::PropertyHandle {
         self.inner
+    }
+
+    /// This is used by Macros in their generated Code allowing them to write down the values
+    /// generated during compiletime.
+    /// This does not serve any further prupose, and should not be used by you
+    #[inline]
+    pub const unsafe fn from_values(plugin_hash: u64, property_hash: u64) -> Self {
+        PropertyHandle { inner: sys::PropertyHandle { plugin: plugin_hash, property: property_hash } }
     }
 }
 
