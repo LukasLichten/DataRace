@@ -10,17 +10,25 @@ pub struct PluginHandle {
     pub(crate) datastore: &'static tokio::sync::RwLock<crate::datastore::DataStore>,
     pub(crate) id: u64,
     pub(crate) subscriptions: HashMap<PropertyHandle, Arc<utils::ValueContainer>>,
-    pub(crate) properties: HashMap<PropertyHandle, Arc<utils::ValueContainer>>,
+    pub(crate) properties: HashMap<u64, Arc<utils::PropertyContainer>>,
+    free_string: extern "C" fn(ptr: *mut libc::c_char)
 }
 
 impl PluginHandle {
-    pub(crate) fn new(name: String, id: u64, datastore: &'static tokio::sync::RwLock<crate::datastore::DataStore>) -> PluginHandle {
+    pub(crate) fn new(name: String, id: u64, datastore: &'static tokio::sync::RwLock<crate::datastore::DataStore>, free_string: extern "C" fn(ptr: *mut libc::c_char)) -> PluginHandle {
         PluginHandle {
             name,
             datastore,
             id,
             subscriptions: HashMap::default(),
-            properties: HashMap::default()
+            properties: HashMap::default(),
+            free_string
+        }
+    }
+
+    pub(crate) fn free_string_ptr(&self, ptr: *mut libc::c_char) {
+        unsafe {
+            (self.free_string)(ptr)
         }
     }
 }

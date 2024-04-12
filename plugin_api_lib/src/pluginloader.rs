@@ -101,7 +101,7 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
         
 
         // Creates PluginHandle
-        let handle = PluginHandle::new(name, id, datastore);
+        let handle = PluginHandle::new(name, id, datastore, wrapper.free_string.clone());
         let ptr_h = PtrWrapper { ptr: Box::into_raw(Box::new(handle)) };
         let (sender, receiver) = utils::get_message_channel();
 

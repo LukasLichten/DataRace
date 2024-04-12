@@ -5,7 +5,7 @@ use highway::{HighwayHash, HighwayHasher, Key};
 
 use tokio::sync::Mutex;
 
-use crate::{pluginloader::Message, Property, PropertyType, PropertyHandle};
+use crate::{pluginloader::Message, PluginHandle, Property, PropertyHandle, PropertyType};
 
 /// Simple way to aquire a String for a null terminating c_char ptr
 /// We do not optain ownership of the String, the owner has to deallocate it
@@ -28,7 +28,22 @@ pub fn get_message_channel() -> (Sender<Message>, Receiver<Message>) {
     kanal::unbounded()
 }
 
+#[derive(Debug)]
+pub(crate) struct PropertyContainer {
+    value: ValueContainer,
+    allow_modify: bool,
+    pub(crate) short_name: String,
+}
 
+impl PropertyContainer {
+    pub(crate) fn new(short_name: String, value: Property, plugin_handle: &PluginHandle) -> Self {
+        Self {
+            short_name,
+            allow_modify: true,
+            value: ValueContainer::new(value, plugin_handle)
+        }
+    }
+}
 
 #[derive(Debug)]
 pub(crate) enum ValueContainer {
@@ -36,49 +51,121 @@ pub(crate) enum ValueContainer {
     Int(AtomicI64),
     Float(AtomicU64),
     Bool(AtomicBool),
-    Str(Mutex<Arc<String>>, Vec<(AsyncSender<Message>, u64)>),
+    Str(Mutex<Arc<String>>),
     Dur(AtomicI64)
 }
 
+const SAVE_ORDERING: Ordering = Ordering::Release;
+const READ_ORDERING: Ordering = Ordering::Acquire;
+
 impl ValueContainer {
-    fn new(val: Value) -> ValueContainer {
+    fn new(val: Property, plugin_handle: &PluginHandle) -> Self {
+        let new = match val.sort {
+            PropertyType::None => ValueContainer::None,
+            PropertyType::Int => ValueContainer::Int(AtomicI64::default()),
+            PropertyType::Float => ValueContainer::Float(AtomicU64::default()),
+            PropertyType::Boolean => ValueContainer::Bool(AtomicBool::default()),
+            PropertyType::Str => ValueContainer::Str(Mutex::default()),
+            PropertyType::Duration => ValueContainer::Dur(AtomicI64::default())
+        };
+        new.update(val, plugin_handle);
+
+        new
+    }
+
+
+    fn new_int(val: Value) -> ValueContainer {
         match val {
             Value::None => ValueContainer::None,
             Value::Int(i) => ValueContainer::Int(AtomicI64::new(i)),
             Value::Float(f) => ValueContainer::Float(AtomicU64::new(f)),
             Value::Bool(b) => ValueContainer::Bool(AtomicBool::new(b)),
-            Value::Str(s) => ValueContainer::Str(Mutex::new(s), Vec::default()),
+            Value::Str(s) => ValueContainer::Str(Mutex::new(s)),
             Value::Dur(d) => ValueContainer::Dur(AtomicI64::new(d))
         }
     }
 
-    async fn update(&self, val: Value, prop_handle: &PropertyHandle) -> bool {
+    fn update(&self, val: Property, plugin_handle: &PluginHandle) -> bool {
+        match (val.sort, self) {
+            (PropertyType::None, ValueContainer::None) => true,
+            (PropertyType::Int, ValueContainer::Int(at)) => {
+                let i = unsafe { val.value.integer };
+                at.store(i, SAVE_ORDERING);
+                true
+            },
+            (PropertyType::Float, ValueContainer::Float(at)) => {
+                let f = unsafe { val.value.decimal };
+                let conv = u64::from_be_bytes(f.to_be_bytes());
+                at.store(conv, SAVE_ORDERING);
+                true
+            },
+            (PropertyType::Boolean, ValueContainer::Bool(at)) => {
+                let b = unsafe {
+                    val.value.boolean
+                };
+                at.store(b, SAVE_ORDERING);
+                true
+            },
+            (PropertyType::Str, ValueContainer::Str(mu)) => {
+                let ptr = unsafe {
+                    val.value.str
+                };
+                let str = if let Some(val) = get_string(ptr) {
+                    // I am not 100% sure we are properly disposing of the original cstring
+                    // Does to_string clone the data?
+                    // Does Arc clone the data?
+                    // we just call clone here so we can "safely" drop the Cstring
+                    let re = val.clone();
+
+                    plugin_handle.free_string_ptr(ptr);
+                    re
+                } else {
+                    return false;
+                };
+
+                // TODO deal with async locking
+                let _res = mu.lock();
+                // *res = str;
+
+                false
+            },
+            (PropertyType::Duration, ValueContainer::Dur(at)) => {
+                let d = unsafe { val.value.dur };
+                at.store(d, SAVE_ORDERING);
+
+                true
+            }
+            _ => false
+        }
+    }
+
+    async fn update_int(&self, val: Value, prop_handle: &PropertyHandle) -> bool {
         match (val,self) {
             (Value::None, ValueContainer::None) => true,
             (Value::Int(i), ValueContainer::Int(at)) => {
-                at.store(i, Ordering::Release);
+                at.store(i, SAVE_ORDERING);
                 true
             },
             (Value::Float(f), ValueContainer::Float(at)) => {
-                at.store(f, Ordering::Release);
+                at.store(f, SAVE_ORDERING);
                 true
             },
             (Value::Bool(b), ValueContainer::Bool(at)) => {
-                at.store(b, Ordering::Release);
+                at.store(b, SAVE_ORDERING);
                 true
             },
-            (Value::Str(s),ValueContainer::Str(mu, listener)) => {
+            (Value::Str(s),ValueContainer::Str(mu)) => {
                 let mut res = mu.lock().await;
                 *res = s.clone();
 
-                for (sub,_) in listener.iter() {
-                    let _ = sub.send(Message::Update(prop_handle.clone(),Value::Str(s.clone()))).await;
-                }
+                // for (sub,_) in listener.iter() {
+                //     let _ = sub.send(Message::Update(prop_handle.clone(),Value::Str(s.clone()))).await;
+                // }
 
                 true
             },
             (Value::Dur(d), ValueContainer::Dur(at)) => {
-                at.store(d, Ordering::Release);
+                at.store(d, SAVE_ORDERING);
                 true
             },
             _ => false,
@@ -88,15 +175,15 @@ impl ValueContainer {
     async fn read(&self) -> Value {
         match self {
             ValueContainer::None => Value::None,
-            ValueContainer::Int(at) => Value::Int(at.load(Ordering::Acquire)),
-            ValueContainer::Float(at) => Value::Float(at.load(Ordering::Acquire)),
-            ValueContainer::Bool(at) => Value::Bool(at.load(Ordering::Acquire)),
-            ValueContainer::Str(mu,_) => { 
+            ValueContainer::Int(at) => Value::Int(at.load(READ_ORDERING)),
+            ValueContainer::Float(at) => Value::Float(at.load(READ_ORDERING)),
+            ValueContainer::Bool(at) => Value::Bool(at.load(READ_ORDERING)),
+            ValueContainer::Str(mu) => { 
                 let res = mu.lock().await;
                 let a = res.clone();
                 Value::Str(a)
             },
-            ValueContainer::Dur(at) => Value::Dur(at.load(Ordering::Acquire)),
+            ValueContainer::Dur(at) => Value::Dur(at.load(READ_ORDERING)),
         }
     }
 }

@@ -65,13 +65,24 @@ macro_rules! get_string {
 /// Also the initial value set the datatype, you can only use this type when calling update 
 /// you need to call change_property_type to change this type
 #[no_mangle]
-pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, value: Property) -> DataStoreReturnCode {
+pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, prop_handle: PropertyHandle, value: Property) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
     let msg = get_string!(name, DataStoreReturnCode::ParameterCorrupted);
 
-    // TODO
+    if let Some(prop_hash) = utils::generate_property_name_hash(msg.as_str()) {
+        if prop_handle.property != prop_hash || prop_handle.plugin != han.id {
+            // TODO perhaps a new error code for
+            // invalid parameters, but not corrupted
+            return DataStoreReturnCode::ParameterCorrupted;
+        }
+    } else {
+        return DataStoreReturnCode::ParameterCorrupted;
+    }
 
-    DataStoreReturnCode::NotImplemented
+    let _prop_container = utils::PropertyContainer::new(msg, value, han);
+    // TODO message the pluginloader to add the property
+
+    DataStoreReturnCode::Ok
 }
 
 /// Updates the value for the Property behind a given handle

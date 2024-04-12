@@ -44,11 +44,11 @@ pub fn log_error <S: ToString>(handle: &PluginHandle, msg: S) {
 /// plugin_name.name
 /// The initial value will determine the Type of this Property, as long as you don't call
 /// change_property_type it will be only possible to update using the same type
-pub fn create_property <S: ToString>(handle: &PluginHandle, name: S, init: Property) -> DataStoreReturnCode {
+pub fn create_property <S: ToString>(handle: &PluginHandle, name: S, prop_handle: &PropertyHandle, init: Property) -> DataStoreReturnCode {
     let name_ptr = create_cstring!(name);
 
     let res = unsafe {
-        sys::create_property(handle.get_ptr(), name_ptr, init.to_c())
+        sys::create_property(handle.get_ptr(), name_ptr, prop_handle.get_inner(), init.to_c())
     };
     drop_cstring!(name_ptr);
 

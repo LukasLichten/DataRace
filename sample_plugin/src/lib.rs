@@ -15,7 +15,15 @@ const PROP_HANDLE: PropertyHandle = datarace_plugin_api_wrapper::macros::generat
 // this function handles the init
 // it takes a PluginHandle
 fn handle_init(handle: PluginHandle) -> Result<(),String> {
-    match api::create_property(&handle, "Test", Property::Int(5)) {
+    let prop_name = "sample_plugin.Test";
+    let runtime_prop_handle = api::generate_property_handle(prop_name).unwrap();
+    let compiled_prop_handle = datarace_plugin_api_wrapper::macros::generate_property_handle!(" sample_plugin.test");
+
+    assert_eq!(runtime_prop_handle, compiled_prop_handle, "these will be equal for the same (case insensetive) name");
+    assert_eq!(runtime_prop_handle, PROP_HANDLE, "including those in consts you can also stored them in consts");
+
+
+    match api::create_property(&handle, "Test", &PROP_HANDLE, Property::Int(5)) {
         DataStoreReturnCode::Ok => {
             // let v = api::get_property_value(&handle, &prop_handle).unwrap();
             // api::log_info(&handle, format!("{}", match v { Property::Int(i) => i.to_string(), _ => "NAN".to_string() }));
@@ -23,12 +31,6 @@ fn handle_init(handle: PluginHandle) -> Result<(),String> {
         e => api::log_error(&handle, e)
     };
 
-    let prop_name = "sample_plugin.Test";
-    let runtime_prop_handle = api::generate_property_handle(prop_name).unwrap();
-    let compiled_prop_handle = datarace_plugin_api_wrapper::macros::generate_property_handle!(" sample_plugin.test");
-
-    assert_eq!(runtime_prop_handle, compiled_prop_handle, "these will be equal for the same (case insensetive) name");
-    assert_eq!(runtime_prop_handle, PROP_HANDLE, "including those in consts you can also stored them in consts");
 
     api::subscribe_property(&handle, &PROP_HANDLE);
 
