@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned, ToTokens};
-use syn::{parse::{Parse, ParseStream}, parse_macro_input, LitInt, LitStr, Token};
+use syn::{parse::{Parse, ParseStream}, parse_macro_input, Ident, LitInt, LitStr, Token};
 
 /// Generates the init function REQUIRED for your plugin <br>
 /// Pass in the name of your function that will handle the startup<br>
@@ -14,8 +14,7 @@ use syn::{parse::{Parse, ParseStream}, parse_macro_input, LitInt, LitStr, Token}
 /// of this plugin.
 #[proc_macro]
 pub fn init_fn(input: TokenStream) -> TokenStream {
-
-    let func_name = quote::format_ident!("{}", input.to_string());
+    let func_name = parse_macro_input!(input as Ident);
     
     quote! {
 #[no_mangle]
@@ -143,7 +142,7 @@ pub extern "C" fn free_string(ptr: *mut std::os::raw::c_char) {
 /// of this plugin.
 #[proc_macro]
 pub fn update_fn(input: TokenStream) -> TokenStream {
-    let func_name = quote::format_ident!("{}", input.to_string());
+    let func_name = parse_macro_input!(input as Ident);
     
     quote! {
 #[no_mangle]

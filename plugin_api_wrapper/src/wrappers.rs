@@ -45,6 +45,12 @@ impl PropertyHandle {
     }
 }
 
+impl PartialEq for PropertyHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner.plugin == other.inner.plugin && self.inner.property == other.inner.property
+    }
+}
+
 /// Value of a Property
 /// This type is used for setting and getting Values
 ///

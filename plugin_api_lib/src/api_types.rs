@@ -79,6 +79,7 @@ impl Default for PropertyHandle {
 
 impl PropertyHandle {
     pub(crate) fn new(str: &str) -> Option<Self> {
+        let str = str.trim();
         let mut split = str.splitn(2, '.');
 
         let plugin_name = split.next()?;

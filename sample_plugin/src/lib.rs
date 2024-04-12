@@ -1,4 +1,4 @@
-use datarace_plugin_api_wrapper::wrappers::{DataStoreReturnCode, Message, PluginHandle, Property};
+use datarace_plugin_api_wrapper::wrappers::{DataStoreReturnCode, Message, PluginHandle, Property, PropertyHandle};
 use datarace_plugin_api_wrapper::api;
 
 // This is requires to handle deallocating strings
@@ -10,6 +10,7 @@ datarace_plugin_api_wrapper::macros::plugin_descriptor_fn!("sample_plugin", 0, 0
 // This generates the extern func, while also wrapping the types
 datarace_plugin_api_wrapper::macros::init_fn!(handle_init);
 
+const PROP_HANDLE: PropertyHandle = datarace_plugin_api_wrapper::macros::generate_property_handle!("sample_plugin.Test");
 
 // this function handles the init
 // it takes a PluginHandle
@@ -22,30 +23,27 @@ fn handle_init(handle: PluginHandle) -> Result<(),String> {
         e => api::log_error(&handle, e)
     };
 
-    match api::generate_property_handle("sample_plugin.Test") {
-        Ok(prop_handle) => {
-            dbg!(&prop_handle);
+    let prop_name = "sample_plugin.Test";
+    let runtime_prop_handle = api::generate_property_handle(prop_name).unwrap();
+    let compiled_prop_handle = datarace_plugin_api_wrapper::macros::generate_property_handle!(" sample_plugin.test");
 
-            let prop_handle = datarace_plugin_api_wrapper::macros::generate_property_handle!("sample_plugin.test");
-            dbg!(&prop_handle);
+    assert_eq!(runtime_prop_handle, compiled_prop_handle, "these will be equal for the same (case insensetive) name");
+    assert_eq!(runtime_prop_handle, PROP_HANDLE, "including those in consts you can also stored them in consts");
 
-            api::subscribe_property(&handle, &prop_handle);
+    api::subscribe_property(&handle, &PROP_HANDLE);
 
-            api::update_property(&handle, &prop_handle, Property::Int(1));
+    api::update_property(&handle, &PROP_HANDLE, Property::Int(1));
 
 
-            // let v = api::get_property_value(&handle, &prop_handle).unwrap();
-            // api::log_info(&handle, format!("{}", match v { Property::Int(i) => i.to_string(), _ => "NAN".to_string() }));
-            //
-            // let code = api::delete_property(&handle, prop_handle);
-            // if code != DataStoreReturnCode::Ok {
-            //     api::log_error(&handle, code);
-            // } else {
-            //     api::log_info(&handle, "Property succesfully deleted");
-            // }
-        },
-        Err(e) => api::log_error(&handle, e)
-    };
+    // let v = api::get_property_value(&handle, &prop_handle).unwrap();
+    // api::log_info(&handle, format!("{}", match v { Property::Int(i) => i.to_string(), _ => "NAN".to_string() }));
+    //
+    // let code = api::delete_property(&handle, prop_handle);
+    // if code != DataStoreReturnCode::Ok {
+    //     api::log_error(&handle, code);
+    // } else {
+    //     api::log_info(&handle, "Property succesfully deleted");
+    // }
 
     Ok(())
 }
