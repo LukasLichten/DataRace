@@ -5,7 +5,7 @@ use highway::{HighwayHash, HighwayHasher, Key};
 
 use tokio::sync::Mutex;
 
-use crate::{pluginloader::Message, PluginHandle, Property, PropertyHandle, PropertyType};
+use crate::{pluginloader::LoaderMessage, PluginHandle, Property, PropertyHandle, PropertyType, PropertyValue};
 
 /// Simple way to aquire a String for a null terminating c_char ptr
 /// We do not optain ownership of the String, the owner has to deallocate it
@@ -24,7 +24,7 @@ pub fn get_string(ptr: *mut c_char) -> Option<String> {
     }.to_string())
 }
 
-pub fn get_message_channel() -> (Sender<Message>, Receiver<Message>) {
+pub fn get_message_channel() -> (Sender<LoaderMessage>, Receiver<LoaderMessage>) {
     kanal::unbounded()
 }
 
@@ -42,6 +42,25 @@ impl PropertyContainer {
             allow_modify: true,
             value: ValueContainer::new(value, plugin_handle)
         }
+    }
+
+    pub(crate) fn update(&self, val: Property, plugin_handle: &PluginHandle) -> bool {
+        if !self.allow_modify {
+            // Not allowed to edit
+            if val.sort == PropertyType::Str {
+                unsafe {
+                    plugin_handle.free_string_ptr(val.value.str);
+                }
+            }
+
+            return false;
+        }
+
+        self.value.update(val, plugin_handle)
+    }
+
+    pub(crate) fn read(&self) -> Property {
+        self.value.read()
     }
 }
 
@@ -117,7 +136,9 @@ impl ValueContainer {
                     // we just call clone here so we can "safely" drop the Cstring
                     let re = val.clone();
 
-                    plugin_handle.free_string_ptr(ptr);
+                    unsafe {
+                        plugin_handle.free_string_ptr(ptr);
+                    }
                     re
                 } else {
                     return false;
@@ -134,7 +155,15 @@ impl ValueContainer {
                 at.store(d, SAVE_ORDERING);
 
                 true
-            }
+            },
+            (PropertyType::Str, _) => {
+                // Deallocating the string, even if this is a missmatch
+                unsafe {
+                    let ptr = val.value.str;
+                    plugin_handle.free_string_ptr(ptr);
+                }
+                false
+            },
             _ => false
         }
     }
@@ -172,7 +201,35 @@ impl ValueContainer {
         }
     }
 
-    async fn read(&self) -> Value {
+    pub(crate) fn read(&self) -> Property {
+        match self {
+            ValueContainer::None => Property::default(),
+            ValueContainer::Int(at) => Property {
+                sort: PropertyType::Int,
+                value: PropertyValue { integer: at.load(READ_ORDERING) }
+            },
+            ValueContainer::Float(at) => Property {
+                sort: PropertyType::Float,
+                value: {
+                    let conv = at.load(READ_ORDERING);
+                    PropertyValue { decimal: f64::from_be_bytes(conv.to_be_bytes()) }
+                }
+            },
+            ValueContainer::Bool(at) => Property {
+                sort: PropertyType::Boolean,
+                value: PropertyValue { boolean: at.load(READ_ORDERING) }
+            },
+            ValueContainer::Str(mu) => Property::default(),
+            ValueContainer::Dur(at) => {
+                Property {
+                    sort: PropertyType::Duration,
+                    value: PropertyValue { dur: at.load(READ_ORDERING) }
+                }
+            }
+        }
+    }
+
+    async fn read_int(&self) -> Value {
         match self {
             ValueContainer::None => Value::None,
             ValueContainer::Int(at) => Value::Int(at.load(READ_ORDERING)),

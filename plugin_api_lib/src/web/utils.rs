@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use kanal::{AsyncReceiver, AsyncSender};
 use socketioxide::socket::Sid;
 use tokio::sync::RwLock;
-use crate::{datastore::DataStore, pluginloader::Message};
+use crate::{datastore::DataStore, pluginloader::LoaderMessage};
 
 pub(super) type DataStoreLocked = &'static RwLock<DataStore>;
 pub(super) type SocketDataRef = &'static SocketData;
@@ -17,11 +17,11 @@ pub(super) enum Auth {
 pub(super) struct SocketData {
     pub datastore: DataStoreLocked,
     access_table: RwLock<HashMap<Sid, Auth>>,
-    pub sender: AsyncSender<Message>
+    pub sender: AsyncSender<LoaderMessage>
 }
 
 impl SocketData {
-    pub(super) fn new(datastore: DataStoreLocked) -> (SocketDataRef, AsyncReceiver<Message>) {
+    pub(super) fn new(datastore: DataStoreLocked) -> (SocketDataRef, AsyncReceiver<LoaderMessage>) {
         let (sx, rx) = kanal::unbounded_async();
         (Box::leak(
             Box::new(

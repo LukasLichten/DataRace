@@ -32,9 +32,9 @@ fn handle_init(handle: PluginHandle) -> Result<(),String> {
     };
 
 
-    api::subscribe_property(&handle, &PROP_HANDLE);
-
-    api::update_property(&handle, &PROP_HANDLE, Property::Int(1));
+    // api::subscribe_property(&handle, &PROP_HANDLE);
+    //
+    // api::update_property(&handle, &PROP_HANDLE, Property::Int(1));
 
 
     // let v = api::get_property_value(&handle, &prop_handle).unwrap();
@@ -55,6 +55,50 @@ datarace_plugin_api_wrapper::macros::update_fn!(handle_update);
 // this function deal with messages during runtime
 fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
     match msg {
+        Message::Lock => {
+            // This message comes in to lock the plugin handle to perform some write (like creating
+            // a Property). This means we need to stop performing any reads on the handle
+            // till we are unlocked again.
+            // So we need to stop/hold any seperate threads.
+            // The lock applies after this function call returns
+            
+            // As this sample doesn't have a seperate thread currently we just log something instead
+            api::log_info(&handle, "Received Lock");
+
+        },
+        Message::Unlock => {
+            // The pluginloader has finished write operations (for now) and we can resume
+            // computation
+            
+            // Again, sample does not have a seperate thread currently, so we log
+            api::log_info(&handle, "Received Unlock");
+
+            let start = std::time::Instant::now();
+
+            match api::get_property_value(&handle, &PROP_HANDLE) {
+                Ok(val) => {
+                    api::log_info(&handle, format!("Value is {}", val.to_string()));
+                },
+                Err(e) => {
+                    api::log_error(&handle, e);
+                }
+            }
+
+            let res = api::update_property(&handle, &PROP_HANDLE, Property::Int(2));
+            if res != DataStoreReturnCode::Ok {
+                api::log_error(&handle, res);
+            }
+
+            match api::get_property_value(&handle, &PROP_HANDLE) {
+                Ok(val) => {
+                    let later = std::time::Instant::now();
+                    api::log_info(&handle, format!("Value is {} in {}ns", val.to_string(), (later - start).as_nanos()));
+                },
+                Err(e) => {
+                    api::log_error(&handle, e);
+                }
+            }
+        },
         Message::Update(prop_handle, value) => {
             // api::log_info(&handle, format!("{}", match value { Property::Int(i) => i.to_string(), _ => "NAN".to_string() }));
             
@@ -70,6 +114,15 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
         },
         Message::Removed(_prop_handle) => {
             api::log_info(&handle, "Property reached 400,000 and got deleted");
+        },
+        Message::Shutdown => {
+            // Shutdown signal, so if we want to store some config, this would be a great place to
+            // save it.
+            // But it is of note that shutdown update is only send if the program is shutdown
+            // properly, if your plugin failed a previous update and got unloaded that way, then it
+            // won't be send
+
+            api::log_info(&handle, "See You, Space Cowboy...");
         },
         _ => ()
     }

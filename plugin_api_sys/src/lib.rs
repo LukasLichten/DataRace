@@ -14,12 +14,14 @@ pub use bindings::{log_info, log_error};
 // Property Functions
 pub use bindings::{create_property, update_property, get_property_value, generate_property_handle, delete_property, subscribe_property, unsubscribe_property};
 
+//Additional functions
+pub use bindings::deallocate_string;
 
 //Data
 // Enums
 pub use bindings::{DataStoreReturnCode, DataStoreReturnCode_Ok, DataStoreReturnCode_NotAuthenticated, DataStoreReturnCode_AlreadyExists, DataStoreReturnCode_DoesNotExist, DataStoreReturnCode_OutdatedPropertyHandle, DataStoreReturnCode_TypeMissmatch, DataStoreReturnCode_NotImplemented, DataStoreReturnCode_ParameterCorrupted, DataStoreReturnCode_DataCorrupted};
 pub use bindings::{PropertyType, PropertyType_None, PropertyType_Int, PropertyType_Float, PropertyType_Boolean, PropertyType_Str, PropertyType_Duration};
-pub use bindings::{MessageType, MessageType_Update, MessageType_Removed}; 
+pub use bindings::{MessageType, MessageType_Update, MessageType_Removed, MessageType_Lock, MessageType_Unlock, MessageType_Shutdown}; 
 
 // Message
 pub use bindings::{Message, MessageValue};

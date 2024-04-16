@@ -6,7 +6,7 @@ use log::{error, info, debug};
 
 use tokio::task::JoinSet;
 
-use crate::{api_types, datastore::DataStore, utils::{self, Value}, DataStoreReturnCode, PluginHandle, PropertyHandle};
+use crate::{api_types, datastore::DataStore, utils::{self, Value}, DataStoreReturnCode, Message, MessageType, MessageValue, PluginHandle, PropertyHandle};
 
 pub(crate) async fn load_all_plugins(datastore: &'static tokio::sync::RwLock<DataStore>) -> Result<JoinSet<()>,Box<dyn std::error::Error>> {
     let plugin_folder = PathBuf::from("./plugins/");
@@ -101,9 +101,9 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
         
 
         // Creates PluginHandle
-        let handle = PluginHandle::new(name, id, datastore, wrapper.free_string.clone());
-        let ptr_h = PtrWrapper { ptr: Box::into_raw(Box::new(handle)) };
         let (sender, receiver) = utils::get_message_channel();
+        let handle = PluginHandle::new(name, id, datastore, sender.clone(), wrapper.free_string.clone());
+        let mut ptr_h = PtrWrapper { ptr: Box::into_raw(Box::new(handle)), is_locked: false };
 
         let mut w_store = datastore.write().await;
         if w_store.register_plugin(id, sender.clone(), ptr_h.ptr).is_none() {
@@ -131,9 +131,15 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
 
         // let _ = sender.as_async().send(Message::Polled).await;
         while let Ok(msg) = async_rec.recv().await {
-            match msg {
-                Message::Shutdown => break,
-                Message::Subscribe(prop_handle) => {
+            if let Err(e) = match msg {
+                LoaderMessage::PropertyCreate(id, container) => {
+                    create_property(&wrapper, &mut ptr_h, id, container)
+                },
+                LoaderMessage::PropertyDelete(_) => {
+                    Ok(())
+                }
+                LoaderMessage::Shutdown => shutdown(&wrapper, &mut ptr_h),
+                LoaderMessage::Subscribe(prop_handle) => {
                     // // We will finish the polling so we add this prop handle to the list, then let
                     // // the list be stored dormant in a task till needed
                     // let (mut list, changed) = poller.await.unwrap();
@@ -157,8 +163,9 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
                     // }
                     // 
                     // poller = tokio::spawn(store_list(list, changed))
+                    Ok(())
                 },
-                Message::Unsubscribe(prop_handle) => {
+                LoaderMessage::Unsubscribe(prop_handle) => {
                     // let (mut list, changed) = poller.await.unwrap();
                     //
                     // let mut index = 0;
@@ -174,8 +181,9 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
                     // }
                     //
                     // poller = tokio::spawn(store_list(list, changed))
-                },
-                Message::Polled => {
+                //     Ok(())
+                // },
+                // Message::Polled => {
                     // let (list, changed) = poller.await.unwrap();
                     // 
                     // for (prop_handle, value) in changed {
@@ -190,15 +198,37 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
                     // } else {
                     //     tokio::spawn(poll_propertys(datastore, list, changed, sender.clone()))
                     // };
+                    Ok(())
                 },
-                Message::Update(prop_handle, value) => {
-                    let msg = Message::Update(prop_handle, value);
+                LoaderMessage::Update(prop_handle, value) => {
+                    let msg = LoaderMessage::Update(prop_handle, value);
                     send_update!(wrapper, ptr_h, msg);
+                    Ok(())
                 },
-                Message::Removed(prop_handle) => {
-                    let msg = Message::Removed(prop_handle);
+                LoaderMessage::Removed(prop_handle) => {
+                    let msg = LoaderMessage::Removed(prop_handle);
                     send_update!(wrapper, ptr_h, msg);
+                    Ok(())
                 }
+            } {
+                // log out the error and exit loop
+                match e {
+                    MsgProcessingError::Shutdown => {
+                        debug!("Plugin {} received shutdown, exiting loop", get_plugin_name(&ptr_h));
+                    },
+                    MsgProcessingError::NoneZeroReturnCode(str) => {
+                        error!("Plugin {} failed, none zero return code received when executing {}", get_plugin_name(&ptr_h), str);
+                    },
+                    MsgProcessingError::NullPtr => {
+                        error!("A Plugin could not dereference the pluginhandle due to null pointer");
+                        return;
+                    }
+                }
+                break;
+            }
+
+            if async_rec.is_empty() && ptr_h.is_locked {
+                send_unlock(&wrapper, &mut ptr_h).unwrap();
             }
         }
 
@@ -221,7 +251,8 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
 
 // We have to do this, as you can otherwise not await anything
 struct PtrWrapper {
-    ptr: *mut PluginHandle
+    ptr: *mut PluginHandle,
+    is_locked: bool
 }
 
 unsafe impl Send for PtrWrapper { }
@@ -245,8 +276,9 @@ pub struct PluginWrapper {
 }
 
 // Sketchup of what Message will internally become
-pub(crate) enum Message {
-    Polled,
+pub(crate) enum LoaderMessage {
+    PropertyCreate(u64, utils::PropertyContainer),
+    PropertyDelete(u64),
     Subscribe(PropertyHandle),
     Unsubscribe(PropertyHandle),
     Update(PropertyHandle, Value),
@@ -255,5 +287,85 @@ pub(crate) enum Message {
 
 }
 
+#[derive(Debug)]
+enum MsgProcessingError {
+    NoneZeroReturnCode(&'static str),
+    Shutdown,
+    NullPtr,
 
+}
 
+fn get_mut_handle<'a>(ptr: &'a PtrWrapper) -> Result<&'a mut PluginHandle, MsgProcessingError> {
+    if let Some(han) = unsafe {
+        ptr.ptr.as_mut()
+    } {
+        Ok(han)
+    } else {
+        Err(MsgProcessingError::NullPtr)
+    }
+}
+
+fn get_handle<'a>(ptr: &'a PtrWrapper) -> Result<&'a PluginHandle, MsgProcessingError> {
+    if let Some(han) = unsafe {
+        ptr.ptr.as_ref()
+    } {
+        Ok(han)
+    } else {
+        Err(MsgProcessingError::NullPtr)
+    }
+}
+
+/// Serves to check if the handle is locked, if not change that
+fn send_lock(wrapper: &PluginWrapper, ptr: &mut PtrWrapper) -> Result<(), MsgProcessingError> {
+    if !ptr.is_locked {
+        // We lock the plugin, then actually secure write lock
+        // This is to prevent a lock trap from calls during the lock update
+        if wrapper.update(ptr.ptr, Message { sort: MessageType::Lock, value: MessageValue { flag: true } }) != 0 {
+            return Err(MsgProcessingError::NoneZeroReturnCode("Failed on lock"))
+        }
+
+        let han = get_handle(ptr)?;
+        han.lock();
+        let _ = han;
+        
+        ptr.is_locked = true;
+    }
+
+    Ok(())
+}
+
+fn send_unlock(wrapper: &PluginWrapper, ptr: &mut PtrWrapper) -> Result<(), MsgProcessingError> {
+    if ptr.is_locked {
+        let han = get_handle(ptr)?;
+        han.unlock();
+        let _ = han;
+
+        ptr.is_locked = false;
+
+        if wrapper.update(ptr.ptr, Message { sort: MessageType::Unlock, value: MessageValue { flag: true } }) != 0 {
+            return Err(MsgProcessingError::NoneZeroReturnCode("Failed on unlock"))
+        }
+    }
+
+    Ok(())
+}
+
+fn create_property(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64, container: utils::PropertyContainer) -> Result<(), MsgProcessingError> {
+    send_lock(wrapper, ptr)?;
+
+    let handle = get_mut_handle(ptr)?;
+
+    handle.properties.insert(id, container);
+
+    Ok(())
+}
+
+fn shutdown(wrapper: &PluginWrapper, ptr: &mut PtrWrapper) -> Result<(), MsgProcessingError> {
+    send_unlock(wrapper, ptr)?;
+    
+    if wrapper.update(ptr.ptr, Message { sort: MessageType::Shutdown, value: MessageValue { flag: true }}) != 0 {
+        return Err(MsgProcessingError::NoneZeroReturnCode("Failed on shutdown message"));
+    }
+
+    Err(MsgProcessingError::Shutdown)
+}

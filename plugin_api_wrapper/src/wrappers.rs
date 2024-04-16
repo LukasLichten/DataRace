@@ -38,7 +38,7 @@ impl PropertyHandle {
 
     /// This is used by Macros in their generated Code allowing them to write down the values
     /// generated during compiletime.
-    /// This does not serve any further prupose, and should not be used by you
+    /// This does not serve any further purpose, and should not be used by you
     #[inline]
     pub const unsafe fn from_values(plugin_hash: u64, property_hash: u64) -> Self {
         PropertyHandle { inner: sys::PropertyHandle { plugin: plugin_hash, property: property_hash } }
@@ -99,14 +99,11 @@ impl Property {
                 if let Some(val) = get_string(ptr) {
                     // I am not 100% sure we are properly disposing of the original cstring
                     // Does to_string clone the data?
-                    // Does Arc clone the data?
                     // we just call clone here so we can "safely" drop the Cstring
                     let re = Property::Str(val.clone());
 
                     unsafe {
-                        // Deallocating resources a different allocater has allocated is ill
-                        // advised, but we had been given this object, we need to clean up too
-                        drop(CString::from_raw(ptr));
+                        sys::deallocate_string(ptr);
                     }
                     re
                 } else {
@@ -136,6 +133,19 @@ impl Property {
             },
             Property::Duration(d) => sys::Property { sort: sys::PropertyType_Duration, value: sys::PropertyValue { dur: d } },
 
+        }
+    }
+}
+
+impl ToString for Property {
+    fn to_string(&self) -> String {
+        match self {
+            Property::None => "NONE".to_string(),
+            Property::Int(i) => i.to_string(),
+            Property::Float(f) => f.to_string(),
+            Property::Bool(b) => b.to_string(),
+            Property::Str(s) => s.clone(),
+            Property::Duration(d) => format!("{}us", d.to_string())
         }
     }
 }
@@ -194,6 +204,9 @@ impl Display for DataStoreReturnCode {
 
 
 pub enum Message {
+    Lock,
+    Unlock,
+    Shutdown,
     Update(PropertyHandle, Property),
     Removed(PropertyHandle),
 
@@ -203,6 +216,9 @@ pub enum Message {
 impl From<sys::Message> for Message {
     fn from(value: sys::Message) -> Self {
         match value.sort {
+            sys::MessageType_Shutdown => Message::Shutdown,
+            sys::MessageType_Lock => Message::Lock,
+            sys::MessageType_Unlock => Message::Unlock,
             sys::MessageType_Update => {
                 unsafe {
                     let val = value.value.update;

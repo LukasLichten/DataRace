@@ -1,7 +1,7 @@
 use libc::c_char;
 use log::error;
 
-use crate::{pluginloader, utils, DataStoreReturnCode, Message, MessageType, PluginDescription, PluginHandle, Property, PropertyHandle, ReturnValue, API_VERSION};
+use crate::{pluginloader::{self, LoaderMessage}, utils, DataStoreReturnCode, Message, MessageType, PluginDescription, PluginHandle, Property, PropertyHandle, ReturnValue, API_VERSION};
 
 
 macro_rules! get_handle {
@@ -59,9 +59,18 @@ macro_rules! get_string {
     };
 }
 
-/// Creates a new property, and returns (if it succeeds) the PropertyHandle of this Property
+/// Creates a new property (queues it for creation).
+///
+/// It will return errors if the property handle missmatches the name (and the plugin id missmaches
+/// the current plugin name). But it won't detect id collisions.
+/// In general, the property will not immediatly be created, instead sending it to the loader task,
+/// which will through the update function lock the datastore to add it.
+/// But you can't know how much of a backlog the channel going over the the pluginloader, so it
+/// may take even longer.
+/// But this is the safe way of adding properties, as it insures there is no race condition.
 ///
 /// Keep in mind, the name of your plugin will be prepended to the final name: plugin_name.name
+/// It is also your job to deallocate this name string.
 /// Also the initial value set the datatype, you can only use this type when calling update 
 /// you need to call change_property_type to change this type
 #[no_mangle]
@@ -71,16 +80,18 @@ pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, 
 
     if let Some(prop_hash) = utils::generate_property_name_hash(msg.as_str()) {
         if prop_handle.property != prop_hash || prop_handle.plugin != han.id {
-            // TODO perhaps a new error code for
-            // invalid parameters, but not corrupted
             return DataStoreReturnCode::ParameterCorrupted;
         }
     } else {
         return DataStoreReturnCode::ParameterCorrupted;
     }
 
-    let _prop_container = utils::PropertyContainer::new(msg, value, han);
-    // TODO message the pluginloader to add the property
+    let prop_container = utils::PropertyContainer::new(msg, value, han);
+    if let Err(e) = han.sender.send(LoaderMessage::PropertyCreate(prop_handle.property, prop_container)) {
+        error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
+        return DataStoreReturnCode::DataCorrupted; // TODO new type for a not total fail error
+    }
+    
 
     DataStoreReturnCode::Ok
 }
@@ -93,31 +104,35 @@ pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, 
 pub extern  "C" fn update_property(handle: *mut PluginHandle, prop_handle: PropertyHandle, value: Property) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
-    let val = utils::Value::new(value);
-    
+    if let Some(entry) = han.properties.get(&prop_handle.property) {
+        if entry.update(value, han) {
+            return DataStoreReturnCode::Ok;
+        } else {
+            return DataStoreReturnCode::TypeMissmatch;
+        }
+    }
 
-    DataStoreReturnCode::NotImplemented
+    DataStoreReturnCode::DoesNotExist
 }
 
-/// Returns the value for a given property handle that you previously subscribed to
-/// 
+/// Returns the value for a given property handle that you previously subscribed to (or that you
+/// created)
 #[no_mangle]
 pub extern "C" fn get_property_value(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> ReturnValue<Property> {
     let han = get_handle_val!(handle);
 
-    // let res = futures::executor::block_on(async {
-    //     let ds = han.datastore.read().await;
-    //     ds.get_property(&prop_handle).await
-    // });
-    //
-    // ReturnValue::from(match res {
-    //     Ok(val) => {
-    //         Property::try_from(val)
-    //     },
-    //     Err(e) => Err(e)
-    // })
-
-    ReturnValue::from(Err(DataStoreReturnCode::NotImplemented))
+    ReturnValue::from(if let Some(store) = han.subscriptions.get(&prop_handle) {
+        Ok(store.read())
+    } else if prop_handle.plugin == han.id {
+        // Values we created are also accessible
+        if let Some(cont) = han.properties.get(&prop_handle.property) {
+            Ok(cont.read())
+        } else {
+            Err(DataStoreReturnCode::DoesNotExist)
+        }
+    } else {
+        Err(DataStoreReturnCode::DoesNotExist)
+    })
 }
 
 /// Generates the PropertyHandle for a certain name

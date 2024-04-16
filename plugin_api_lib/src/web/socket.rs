@@ -5,7 +5,7 @@ use kanal::AsyncReceiver;
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
 use socketioxide::{extract::{Data, SocketRef, State}, SocketIo};
-use crate::pluginloader::Message;
+use crate::pluginloader::LoaderMessage;
 
 use super::utils::{DataStoreLocked,SocketDataRef,Auth};
 
@@ -88,7 +88,7 @@ async fn on_connect(socket: SocketRef) {
     
 }
 
-async fn test(io: SocketIo, _datastore: SocketDataRef, _rx: AsyncReceiver<Message>) {
+async fn test(io: SocketIo, _datastore: SocketDataRef, _rx: AsyncReceiver<LoaderMessage>) {
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         // io.emit("test", format!("FreeBird!")).ok();

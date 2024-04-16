@@ -8,7 +8,7 @@ use rand::{RngCore, SeedableRng};
 use rand_hc::Hc128Rng;
 use hashbrown::HashMap;
 
-use crate::{pluginloader::Message, utils::Value, DataStoreReturnCode, PluginHandle, PropertyHandle};
+use crate::{pluginloader::LoaderMessage, utils::Value, DataStoreReturnCode, PluginHandle, PropertyHandle};
 
 /// This is our centralized State
 pub(crate) struct DataStore {
@@ -34,7 +34,7 @@ impl DataStore {
     // }
 
     /// Reuses an existing channel
-    pub(crate) fn register_plugin(&mut self, id: u64, sx: Sender<Message>, handle: *mut PluginHandle) -> Option<()> {
+    pub(crate) fn register_plugin(&mut self, id: u64, sx: Sender<LoaderMessage>, handle: *mut PluginHandle) -> Option<()> {
         if self.shutdown {
             return None;
         }
@@ -82,7 +82,7 @@ impl DataStore {
         self.shutdown = true;
 
         for (_,plugin) in self.plugins.iter() {
-            let _ = plugin.channel.as_async().send(Message::Shutdown).await;
+            let _ = plugin.channel.as_async().send(LoaderMessage::Shutdown).await;
         }
     }
 
@@ -92,7 +92,7 @@ impl DataStore {
 }
 
 pub(crate) struct Plugin {
-    channel: Sender<Message>,
+    channel: Sender<LoaderMessage>,
     handle: *mut PluginHandle
 }
 

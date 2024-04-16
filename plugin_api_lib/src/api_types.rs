@@ -10,26 +10,52 @@ pub struct PluginHandle {
     pub(crate) datastore: &'static tokio::sync::RwLock<crate::datastore::DataStore>,
     pub(crate) id: u64,
     pub(crate) subscriptions: HashMap<PropertyHandle, Arc<utils::ValueContainer>>,
-    pub(crate) properties: HashMap<u64, Arc<utils::PropertyContainer>>,
-    free_string: extern "C" fn(ptr: *mut libc::c_char)
+    pub(crate) properties: HashMap<u64, utils::PropertyContainer>,
+    pub(crate) sender: kanal::Sender<crate::pluginloader::LoaderMessage>,
+    free_string: extern "C" fn(ptr: *mut libc::c_char),
+    lock: std::sync::atomic::AtomicU32
 }
 
 impl PluginHandle {
-    pub(crate) fn new(name: String, id: u64, datastore: &'static tokio::sync::RwLock<crate::datastore::DataStore>, free_string: extern "C" fn(ptr: *mut libc::c_char)) -> PluginHandle {
+    pub(crate) fn new(name: String,
+        id: u64,
+        datastore: &'static tokio::sync::RwLock<crate::datastore::DataStore>,
+        sender: kanal::Sender<crate::pluginloader::LoaderMessage>,
+        free_string: extern "C" fn(ptr: *mut libc::c_char)) -> PluginHandle {
         PluginHandle {
             name,
             datastore,
             id,
             subscriptions: HashMap::default(),
             properties: HashMap::default(),
-            free_string
+            free_string,
+            sender,
+            lock: std::sync::atomic::AtomicU32::new(0)
         }
     }
 
-    pub(crate) fn free_string_ptr(&self, ptr: *mut libc::c_char) {
-        unsafe {
+    pub(crate) unsafe fn free_string_ptr(&self, ptr: *mut libc::c_char) {
             (self.free_string)(ptr)
+    }
+
+    /// This locks the datastore, allowing you to take a mut of it to do modifications.
+    /// What this doesn't do:
+    /// - Call this plugin up to execute a lock (but will prevent Pluginloader aquiring mut)
+    /// - Automatically unlock when out of scope
+    pub(crate) fn lock(&self) {
+        // This is a loop, as inbetween being awoken and being able to process someone could steal
+        // the lock
+        while self.lock.swap(1, std::sync::atomic::Ordering::AcqRel) == 1 {
+            atomic_wait::wait(&self.lock, 1);
         }
+    }
+    
+    pub(crate) fn unlock(&self) {
+        self.lock.store(0, std::sync::atomic::Ordering::Release)
+    }
+
+    pub(crate) fn is_locked(&self) -> bool {
+        self.lock.load(std::sync::atomic::Ordering::Acquire) != 1
     }
 }
 
@@ -73,7 +99,7 @@ pub struct ReturnValue<T> {
 /// A Handle that serves for easy access to getting and updating properties
 /// These handles can (and should be where possible) generated at compile time
 #[repr(C)]
-#[derive(Clone,Copy,PartialEq,Hash,Debug)]
+#[derive(Clone,Copy,PartialEq,Eq,Hash,Debug)]
 pub struct PropertyHandle {
     pub plugin: u64,
     pub property: u64
@@ -106,6 +132,7 @@ pub struct Property {
 
 /// The type of this Property
 #[repr(u8)]
+#[derive(Debug, PartialEq)]
 pub enum PropertyType {
     None = 0,
     Int = 1,
@@ -183,11 +210,15 @@ pub struct Message {
 #[repr(u8)]
 pub enum MessageType {
     Update = 0,
-    Removed = 1
+    Removed = 1,
+    Lock = 10,
+    Unlock = 11,
+    Shutdown = 20
 }
 
 #[repr(C)]
 pub union MessageValue {
+    pub flag: bool,
     pub removed_property: PropertyHandle,
     pub update: ManuallyDrop<UpdateValue> 
 }
@@ -198,19 +229,19 @@ pub struct UpdateValue {
     pub value: Property
 }
 
-impl TryFrom<crate::pluginloader::Message> for Message {
+impl TryFrom<crate::pluginloader::LoaderMessage> for Message {
     type Error = ();
 
-    fn try_from(value: crate::pluginloader::Message) -> Result<Self, Self::Error> {
+    fn try_from(value: crate::pluginloader::LoaderMessage) -> Result<Self, Self::Error> {
         Ok(match value {
-            crate::pluginloader::Message::Update(handle, value) => {
+            crate::pluginloader::LoaderMessage::Update(handle, value) => {
                 if let Ok(value) = Property::try_from(value) {
                     Message { sort: MessageType::Update, value: MessageValue { update: ManuallyDrop::new(UpdateValue { handle, value } )  } }
                 } else {
                     return Err(());
                 }
             },
-            crate::pluginloader::Message::Removed(handle) => {
+            crate::pluginloader::LoaderMessage::Removed(handle) => {
                 Message { sort: MessageType::Removed, value: MessageValue { removed_property: handle }}
 
             },

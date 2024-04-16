@@ -38,7 +38,13 @@ pub fn log_error <S: ToString>(handle: &PluginHandle, msg: S) {
 }
 
 
-/// Creates a new Property, and returns when successful the PropertyHandle
+/// Creates a new Property (or more like queues it's creation)
+///
+/// The Property will not be immediatly created, it is only checked if the prop_handle is correct.
+/// A message is instead send to the Pluginloader task for this plugin, which will then lock this
+/// plugin, add the property and unlock.
+/// Keep in mind, due to message backlog, there is no garantee it is added on the next unlock
+/// cycle.
 ///
 /// The name of the property in the end will get the name of the plugin prefixed:
 /// plugin_name.name
@@ -68,10 +74,7 @@ pub fn update_property(handle: &PluginHandle, prop_handle: &PropertyHandle, valu
     DataStoreReturnCode::from(res)
 }
 
-/// Retrieves the value for a certain PropertyHandle
-/// 
-/// It is better to subscribe to a property, as this function incurrs a certain overhead (especially for string).
-/// But if you rarely need this value, then the overhead from polling this value might be worth it
+/// Retrieves the value for a PropertyHandle that you have subscribe to (or created)
 pub fn get_property_value(handle: &PluginHandle, prop_handle: &PropertyHandle) -> Result<Property, DataStoreReturnCode> {
     let res = unsafe {
         sys::get_property_value(handle.get_ptr(), prop_handle.get_inner())
