@@ -86,6 +86,11 @@ pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, 
         return DataStoreReturnCode::ParameterCorrupted;
     }
 
+    if han.properties.contains_key(&prop_handle.property) {
+        // Id is already registered
+        return DataStoreReturnCode::AlreadyExists;
+    }
+
     let prop_container = utils::PropertyContainer::new(msg, value, han);
     if let Err(e) = han.sender.send(LoaderMessage::PropertyCreate(prop_handle.property, prop_container)) {
         error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
@@ -154,12 +159,25 @@ pub extern "C" fn generate_property_handle(name: *mut c_char) -> ReturnValue<Pro
     )
 }
 
-/// Deletes a certain property based on the Handle
+/// Deletes a certain property based on the Handle (or at least queues it)
+///
+/// Same as create, this is (after checking that the property exists) will the send to the loader
+/// which locks the plugin to perform the delete. The queue length is unknown, so it can take
+/// multiple locks and unlocks till this action is performed
 #[no_mangle]
 pub extern "C" fn delete_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
-    DataStoreReturnCode::NotImplemented
+    if prop_handle.plugin == han.id && han.properties.contains_key(&prop_handle.property) {
+        if let Err(e) = han.sender.send(LoaderMessage::PropertyDelete(prop_handle.property)) {
+            error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
+            DataStoreReturnCode::DataCorrupted
+        } else {
+            DataStoreReturnCode::Ok
+        }
+    } else {
+        DataStoreReturnCode::DoesNotExist
+    }
 }
 
 /// Subscribes you to a property, allowing fast access through get_property_value

@@ -135,8 +135,8 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
                 LoaderMessage::PropertyCreate(id, container) => {
                     create_property(&wrapper, &mut ptr_h, id, container)
                 },
-                LoaderMessage::PropertyDelete(_) => {
-                    Ok(())
+                LoaderMessage::PropertyDelete(id) => {
+                    delete_property(&wrapper, &mut ptr_h, id)
                 }
                 LoaderMessage::Shutdown => shutdown(&wrapper, &mut ptr_h),
                 LoaderMessage::Subscribe(prop_handle) => {
@@ -354,8 +354,27 @@ fn create_property(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64, conta
     send_lock(wrapper, ptr)?;
 
     let handle = get_mut_handle(ptr)?;
-
+    
+    if handle.properties.contains_key(&id) {
+        // We will not create the property, instead log an error
+        error!("Plugin {} failed to add property {}, id collision {}", handle.name, container.short_name, id);
+        return Ok(());
+    }
     handle.properties.insert(id, container);
+
+    Ok(())
+}
+
+fn delete_property(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64) -> Result<(), MsgProcessingError> {
+    send_lock(wrapper, ptr)?;
+    let handle = get_mut_handle(ptr)?;
+    
+    if !handle.properties.contains_key(&id) {
+        // We will not create the property, instead log an error
+        error!("Plugin {} failed to delete property of id {}, not found", handle.name, id);
+        return Ok(());
+    }
+    handle.properties.remove(&id);
 
     Ok(())
 }

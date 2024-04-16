@@ -81,6 +81,8 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
                 },
                 Err(e) => {
                     api::log_error(&handle, e);
+                    return Ok(()); // We currently have no state, so we can't tell if this is the
+                    // unlock from creation, or the unlock from deletion
                 }
             }
 
@@ -96,6 +98,16 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
                 },
                 Err(e) => {
                     api::log_error(&handle, e);
+                }
+            }
+
+            let res = api::delete_property(&handle, &PROP_HANDLE);
+            match res {
+                DataStoreReturnCode::Ok => {
+                    api::log_info(&handle, "Deleted");
+                },
+                _ => {
+                    api::log_error(&handle, res);
                 }
             }
         },

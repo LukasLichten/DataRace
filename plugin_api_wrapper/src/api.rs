@@ -116,7 +116,7 @@ pub fn generate_property_handle<S: ToString>(name: S) -> Result<PropertyHandle, 
 }
 
 /// Deletes this property
-pub fn delete_property(handle: &PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
+pub fn delete_property(handle: &PluginHandle, prop_handle: &PropertyHandle) -> DataStoreReturnCode {
     let res = unsafe {
         sys::delete_property(handle.get_ptr(), prop_handle.get_inner())
     };
