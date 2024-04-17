@@ -145,14 +145,14 @@ pub fn change_property_type(handle: &PluginHandle, prop_handle: &PropertyHandle,
     DataStoreReturnCode::from(res)
 }
 
-/// Subscribes you to a property, this will allow you to receive messages whenever this value
-/// changes (sort of). Values are gathered leveraging the async runtime, so this is preferable over
-/// polling manually via get_property_value.
+/// Subscribes you to a property (or more like queues the action)
+/// After this finishes you can access this property through get_property_value
 ///
-/// If the type is a string you will receive a message for each time the value is updated
-/// However all other types are polled by the pluginmanager, with messages send when at least one
-/// changed. This means there is no guarantee that you will see all values.
-/// Polling manually does not garantee this either
+/// Similar to create/delete/change_type, this queues the subscribe action.
+/// However, in this case do not know if the property we are trying to add exists, as we send a
+/// message to our pluginloader, which will then look up and send a message to loader of the plugin
+/// for this property, then this respondes back to our loader, which will then add it to the
+/// subscriptions (for which it will lock)
 pub fn subscribe_property(handle: &PluginHandle, prop_handle: &PropertyHandle) -> DataStoreReturnCode {
     let res = unsafe {
         sys::subscribe_property(handle.get_ptr(), prop_handle.get_inner())
@@ -161,10 +161,11 @@ pub fn subscribe_property(handle: &PluginHandle, prop_handle: &PropertyHandle) -
     DataStoreReturnCode::from(res)
 }
 
-/// Removes subscription off this plugin from a certain property
+/// Removes subscription for a certain property (it will queue it)
 ///
-/// You may after this call still receive some messages from updates of this property for a brief
-/// time as the message queue is emptied
+/// Same as create/change_property/delete, this (after checking that the property was subscribed to) will send a Message to the loader
+/// which locks the plugin to perform the removal. The queue length is unknown, so it can take
+/// multiple locks and unlocks till this action is performed
 pub fn unsubscribe_property(handle: &PluginHandle, prop_handle: &PropertyHandle) -> DataStoreReturnCode {
     let res = unsafe {
         sys::unsubscribe_property(handle.get_ptr(), prop_handle.get_inner())

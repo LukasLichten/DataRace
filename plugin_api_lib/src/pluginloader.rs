@@ -1,7 +1,6 @@
 use std::{path::PathBuf, fs};
 
-use dlopen2::wrapper::{WrapperApi, Container, WrapperMultiApi};
-use kanal::Sender;
+use dlopen2::wrapper::{WrapperApi, Container};
 use log::{error, info, debug};
 
 use tokio::task::JoinSet;
@@ -136,65 +135,10 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
                 LoaderMessage::PropertyTypeChange(id, val_container, allow_modify) => property_type_change(&wrapper, &mut ptr_h, id, val_container, allow_modify),
                 LoaderMessage::PropertyDelete(id) => delete_property(&wrapper, &mut ptr_h, id),
                 LoaderMessage::Shutdown => shutdown(&wrapper, &mut ptr_h),
-                LoaderMessage::Subscribe(prop_handle) => {
-                    // // We will finish the polling so we add this prop handle to the list, then let
-                    // // the list be stored dormant in a task till needed
-                    // let (mut list, changed) = poller.await.unwrap();
-                    //
-                    // if list.len() == 0 {
-                    //     // To start the polling task proper
-                    //     let _ = sender.as_async().send(Message::Polled).await;
-                    // }
-                    //
-                    // // Making sure we don't subscribe to it twice
-                    // let mut is_present = false;
-                    // for (old_prop_handle, _) in list.iter() {
-                    //     if old_prop_handle == &prop_handle {
-                    //         is_present = true;
-                    //         break;
-                    //     }
-                    // }
-                    // 
-                    // if !is_present {
-                    //     list.push((prop_handle, Value::None));
-                    // }
-                    // 
-                    // poller = tokio::spawn(store_list(list, changed))
-                    Ok(())
-                },
+                LoaderMessage::Subscribe(prop_handle) => subscribe_property_start(&wrapper, &mut ptr_h, prop_handle).await,
+                LoaderMessage::GenerateSubscribtion(id, prop_handle) => generate_subcription(&wrapper, &mut ptr_h, id, prop_handle).await,
+                LoaderMessage::UpdateSubscription(prop_handle, val_container) => update_subscription(&wrapper, &mut ptr_h, prop_handle, val_container),
                 LoaderMessage::Unsubscribe(prop_handle) => {
-                    // let (mut list, changed) = poller.await.unwrap();
-                    //
-                    // let mut index = 0;
-                    // while let Some((han, _)) = list.get(index) {
-                    //     if han.index == prop_handle.index && han.hash == prop_handle.hash {
-                    //         break;
-                    //     }
-                    //     index += 1;
-                    // }
-                    //
-                    // if index < list.len() {
-                    //     list.remove(index);
-                    // }
-                    //
-                    // poller = tokio::spawn(store_list(list, changed))
-                //     Ok(())
-                // },
-                // Message::Polled => {
-                    // let (list, changed) = poller.await.unwrap();
-                    // 
-                    // for (prop_handle, value) in changed {
-                    //     let msg = Message::Update(prop_handle, value);
-                    //     send_update!(wrapper, ptr_h, msg);
-                    // }
-                    //
-                    // // changed.clear();
-                    // let changed = vec![];
-                    // poller = if list.len() == 0 {
-                    //     tokio::spawn(store_list(list, changed))
-                    // } else {
-                    //     tokio::spawn(poll_propertys(datastore, list, changed, sender.clone()))
-                    // };
                     Ok(())
                 },
                 LoaderMessage::Update(prop_handle, value) => {
@@ -253,6 +197,7 @@ struct PtrWrapper {
 }
 
 unsafe impl Send for PtrWrapper { }
+unsafe impl Sync for PtrWrapper { }
 
 fn get_plugin_name(ptr: &PtrWrapper) -> String {
     if let Some(handle) = unsafe {
@@ -278,6 +223,8 @@ pub(crate) enum LoaderMessage {
     PropertyTypeChange(u64, utils::ValueContainer, bool),
     PropertyDelete(u64),
     Subscribe(PropertyHandle),
+    GenerateSubscribtion(u64, PropertyHandle),
+    UpdateSubscription(PropertyHandle, utils::ValueContainer),
     Unsubscribe(PropertyHandle),
     Update(PropertyHandle, Value),
     Removed(PropertyHandle),
@@ -311,6 +258,14 @@ fn get_handle<'a>(ptr: &'a PtrWrapper) -> Result<&'a PluginHandle, MsgProcessing
     } else {
         Err(MsgProcessingError::NullPtr)
     }
+}
+
+ async fn send_plugin_message(ptr: &PtrWrapper, id: u64, msg: LoaderMessage) -> Result<bool, MsgProcessingError> {
+    let handle = get_handle(ptr)?;
+    
+    let ds_r = handle.datastore.read().await;
+
+    Ok(ds_r.send_message_to_plugin(id, msg).await)
 }
 
 /// Serves to check if the handle is locked, if not change that
@@ -401,3 +356,52 @@ fn shutdown(wrapper: &PluginWrapper, ptr: &mut PtrWrapper) -> Result<(), MsgProc
 
     Err(MsgProcessingError::Shutdown)
 }
+
+async fn subscribe_property_start(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, prop_handle: PropertyHandle) -> Result<(), MsgProcessingError> {
+    send_unlock(wrapper, ptr)?;
+
+    if !send_plugin_message(ptr, prop_handle.plugin, LoaderMessage::GenerateSubscribtion(get_handle(ptr)?.id, prop_handle)).await? {
+        error!("Plugin {} failed to send message to generate subscription to plugin of id {} (likely plugin does not exist)", get_plugin_name(ptr), prop_handle.plugin);
+        return Ok(());
+    }
+
+    Ok(())
+}
+
+async fn generate_subcription(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64, prop_handle: PropertyHandle) -> Result<(), MsgProcessingError> {
+    send_unlock(wrapper, ptr)?;
+
+    let handle = get_handle(ptr)?;
+    if prop_handle.plugin != handle.id {
+        error!("Plugin {} (id {}) somehow was asked for the property of plugin id {}", handle.name, handle.id, prop_handle.plugin);
+        return Ok(());
+    }
+
+    let val_container = if let Some(cont) = handle.properties.get(&prop_handle.property) {
+       cont.clone_container() 
+    } else {
+        error!("Plugin {} was request property of id {}, but it does not exist", handle.name, prop_handle.property);
+        return Ok(());
+    };
+
+    if !send_plugin_message(ptr, id, LoaderMessage::UpdateSubscription(prop_handle, val_container)).await? {
+        error!("Plugin {} failed to send reply message to containing subscription to plugin of id {}", get_plugin_name(ptr), prop_handle.plugin);
+        return Ok(());
+    }
+
+    // TODO add a database of who is subscribed to what,
+    // so we can inform them if the type changes/is deleted
+
+    Ok(())
+}
+
+fn update_subscription(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, prop_handle: PropertyHandle, val_container: utils::ValueContainer) -> Result<(), MsgProcessingError> {
+    send_lock(wrapper, ptr)?;
+
+    let handle = get_mut_handle(ptr)?;
+    // We do in this case allow overrides
+    handle.subscriptions.insert(prop_handle, val_container);
+
+    Ok(())
+}
+

@@ -9,7 +9,7 @@ pub struct PluginHandle {
     pub(crate) name: String,
     pub(crate) datastore: &'static tokio::sync::RwLock<crate::datastore::DataStore>,
     pub(crate) id: u64,
-    pub(crate) subscriptions: HashMap<PropertyHandle, Arc<utils::ValueContainer>>,
+    pub(crate) subscriptions: HashMap<PropertyHandle, utils::ValueContainer>,
     pub(crate) properties: HashMap<u64, utils::PropertyContainer>,
     pub(crate) sender: kanal::Sender<crate::pluginloader::LoaderMessage>,
     free_string: extern "C" fn(ptr: *mut libc::c_char),

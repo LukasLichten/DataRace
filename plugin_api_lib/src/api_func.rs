@@ -203,31 +203,45 @@ pub extern "C" fn change_property_type(handle: *mut PluginHandle, prop_handle: P
     }
 }
 
-/// Subscribes you to a property, allowing fast access through get_property_value
+/// Subscribes you to a property (or more like queues the action)
+/// After this finishes you can access this property through get_property_value
+///
+/// Similar to create/delete/change_type, this queues the subscribe action.
+/// However, in this case do not know if the property we are trying to add exists, as we send a
+/// message to our pluginloader, which will then look up and send a message to loader of the plugin
+/// for this property, then this respondes back to our loader, which will then add it to the
+/// subscriptions (for which it will lock)
 #[no_mangle]
 pub extern "C" fn subscribe_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
-
-    let res = futures::executor::block_on(async {
-        let mut ds = han.datastore.read().await;
-        DataStoreReturnCode::NotImplemented
-    });
-    res
+    
+    if let Err(e) = han.sender.send(LoaderMessage::Subscribe(prop_handle)) {
+        error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
+        DataStoreReturnCode::DataCorrupted
+    } else {
+        DataStoreReturnCode::Ok
+    }
 }
 
-/// Removes subscription off this plugin from a certain property
+/// Removes subscription for a certain property (it will queue it)
 ///
-/// You may after this call still receive some messages from updates of this property for a brief
-/// time as the message queue is emptied
+/// Same as create/change_property/delete, this (after checking that the property was subscribed to) will send a Message to the loader
+/// which locks the plugin to perform the removal. The queue length is unknown, so it can take
+/// multiple locks and unlocks till this action is performed
 #[no_mangle]
 pub extern "C" fn unsubscribe_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
-    let res = futures::executor::block_on(async {
-        let mut ds = han.datastore.read().await;
-        DataStoreReturnCode::NotImplemented
-    });
-    res
+    if !han.subscriptions.contains_key(&prop_handle) {
+        return DataStoreReturnCode::DoesNotExist;
+    }
+    
+    if let Err(e) = han.sender.send(LoaderMessage::Unsubscribe(prop_handle)) {
+        error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
+        DataStoreReturnCode::DataCorrupted
+    } else {
+        DataStoreReturnCode::Ok
+    }
 }
 
 /// Logs a null terminated String as a Info

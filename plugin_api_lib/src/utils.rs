@@ -67,16 +67,21 @@ impl PropertyContainer {
         self.value = container;
         self.allow_modify = allow_modify;
     }
+
+    /// This generates a linked clone of the ValueContainer, which shares any value updates
+    pub(crate) fn clone_container(&self) -> ValueContainer {
+        self.value.shallow_clone()
+    }
 }
 
 #[derive(Debug)]
 pub(crate) enum ValueContainer {
     None,
-    Int(AtomicI64),
-    Float(AtomicU64),
-    Bool(AtomicBool),
+    Int(Arc<AtomicI64>),
+    Float(Arc<AtomicU64>),
+    Bool(Arc<AtomicBool>),
     Str(Mutex<Arc<String>>),
-    Dur(AtomicI64)
+    Dur(Arc<AtomicI64>)
 }
 
 const SAVE_ORDERING: Ordering = Ordering::Release;
@@ -86,11 +91,11 @@ impl ValueContainer {
     pub(crate) fn new(val: Property, plugin_handle: &PluginHandle) -> Self {
         let new = match val.sort {
             PropertyType::None => ValueContainer::None,
-            PropertyType::Int => ValueContainer::Int(AtomicI64::default()),
-            PropertyType::Float => ValueContainer::Float(AtomicU64::default()),
-            PropertyType::Boolean => ValueContainer::Bool(AtomicBool::default()),
+            PropertyType::Int => ValueContainer::Int(Arc::default()),
+            PropertyType::Float => ValueContainer::Float(Arc::default()),
+            PropertyType::Boolean => ValueContainer::Bool(Arc::default()),
             PropertyType::Str => ValueContainer::Str(Mutex::default()),
-            PropertyType::Duration => ValueContainer::Dur(AtomicI64::default())
+            PropertyType::Duration => ValueContainer::Dur(Arc::default())
         };
         new.update(val, plugin_handle);
 
@@ -99,14 +104,15 @@ impl ValueContainer {
 
 
     fn new_int(val: Value) -> ValueContainer {
-        match val {
-            Value::None => ValueContainer::None,
-            Value::Int(i) => ValueContainer::Int(AtomicI64::new(i)),
-            Value::Float(f) => ValueContainer::Float(AtomicU64::new(f)),
-            Value::Bool(b) => ValueContainer::Bool(AtomicBool::new(b)),
-            Value::Str(s) => ValueContainer::Str(Mutex::new(s)),
-            Value::Dur(d) => ValueContainer::Dur(AtomicI64::new(d))
-        }
+        // match val {
+        //     Value::None => ValueContainer::None,
+        //     Value::Int(i) => ValueContainer::Int(AtomicI64::new(i)),
+        //     Value::Float(f) => ValueContainer::Float(AtomicU64::new(f)),
+        //     Value::Bool(b) => ValueContainer::Bool(AtomicBool::new(b)),
+        //     Value::Str(s) => ValueContainer::Str(Mutex::new(s)),
+        //     Value::Dur(d) => ValueContainer::Dur(AtomicI64::new(d))
+        // }
+        ValueContainer::None
     }
 
     fn update(&self, val: Property, plugin_handle: &PluginHandle) -> bool {
@@ -246,6 +252,21 @@ impl ValueContainer {
                 Value::Str(a)
             },
             ValueContainer::Dur(at) => Value::Dur(at.load(READ_ORDERING)),
+        }
+    }
+
+    /// This generates a shallow clone, which still receives all the same value changes
+    fn shallow_clone(&self) -> ValueContainer {
+        match self {
+            ValueContainer::None => ValueContainer::None,
+            ValueContainer::Int(a) => {
+                let b = a.clone();
+                ValueContainer::Int(b)
+            },
+            ValueContainer::Float(a) => ValueContainer::Float(a.clone()),
+            ValueContainer::Bool(a) => ValueContainer::Bool(a.clone()),
+            ValueContainer::Str(mu) => todo!("string still needs to be implemented"),
+            ValueContainer::Dur(a) => ValueContainer::Dur(a.clone())
         }
     }
 }

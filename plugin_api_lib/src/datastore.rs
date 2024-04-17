@@ -43,7 +43,7 @@ impl DataStore {
             return None;
         } 
 
-        self.plugins.insert(id, Plugin { channel: sx, handle });
+        self.plugins.insert(id, Plugin { channel: sx.to_async(), handle });
         Some(())
     }
 
@@ -82,17 +82,25 @@ impl DataStore {
         self.shutdown = true;
 
         for (_,plugin) in self.plugins.iter() {
-            let _ = plugin.channel.as_async().send(LoaderMessage::Shutdown).await;
+            let _ = plugin.channel.send(LoaderMessage::Shutdown).await;
         }
     }
 
     pub(crate) fn get_shutdown_status(&self) -> bool {
         self.shutdown
     }
+
+    pub(crate) async fn send_message_to_plugin(&self, id: u64, msg: LoaderMessage) -> bool {
+        if let Some(plugin) = self.plugins.get(&id) {
+            plugin.channel.send(msg).await.is_ok()
+        } else {
+            false
+        }
+    }
 }
 
 pub(crate) struct Plugin {
-    channel: Sender<LoaderMessage>,
+    channel: AsyncSender<LoaderMessage>,
     handle: *mut PluginHandle
 }
 
