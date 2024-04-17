@@ -1,4 +1,4 @@
-.phony: all build plugin-api test-plugin clean test final help 
+.phony: all build plugin-api api-debug test-plugin clean test final help 
 
 all: build test-plugin
 	# Test Plugin temporary build also during make
@@ -9,6 +9,9 @@ build: plugin-api
 
 plugin-api:
 	cd plugin_api_lib && cargo build --release
+
+api-debug:
+	cd plugin_api_lib && cargo build
 
 test-plugin:
 	mkdir -p plugins
@@ -34,6 +37,7 @@ help:
 	@echo "make:             Runs 'make build' and then runs it"
 	@echo "make build:       Builds Plugin-API and Executable (release mode)"
 	@echo "make plugin-api:  Only builds the plugin-api (release mode)"
+	@echo "make api-debug:   Builds Plugin-API in debug mode (to address issues with LSPs)"
 	@echo "make test-plugin: Builds the sample plugin"
 	@echo "make clean:       Runs cargo clean and deletes the PluginAPI.so (does not delete plugins/)"
 	@echo "make test:        TODO Runs tests on plugin api"

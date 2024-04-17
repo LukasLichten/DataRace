@@ -12,7 +12,7 @@ pub use bindings::run;
 pub use bindings::{log_info, log_error};
 
 // Property Functions
-pub use bindings::{create_property, update_property, get_property_value, generate_property_handle, delete_property, subscribe_property, unsubscribe_property};
+pub use bindings::{create_property, update_property, get_property_value, generate_property_handle, delete_property, change_property_type, subscribe_property, unsubscribe_property};
 
 //Additional functions
 pub use bindings::deallocate_string;

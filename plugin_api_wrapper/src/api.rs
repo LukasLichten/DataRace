@@ -115,10 +115,31 @@ pub fn generate_property_handle<S: ToString>(name: S) -> Result<PropertyHandle, 
     Ok(PropertyHandle::new(res.value))
 }
 
-/// Deletes this property
+/// Deletes this property (queues the deletion)
+///
+/// Same as create, this (after checking that the property exists) will the send a message to
+/// the loader which locks the plugin to perform the delete. The queue length is unknown,
+/// so it can take multiple locks and unlocks till this action is performed
+///
+/// You can only delete Properties you created
 pub fn delete_property(handle: &PluginHandle, prop_handle: &PropertyHandle) -> DataStoreReturnCode {
     let res = unsafe {
         sys::delete_property(handle.get_ptr(), prop_handle.get_inner())
+    };
+
+    DataStoreReturnCode::from(res)
+}
+
+/// Changes the type of this property (or more like queues this change)
+///
+/// Same as create and delete, this (after checking that the property exists) will the send a message to
+/// the loader which locks the plugin to perform the delete. The queue length is unknown,
+/// so it can take multiple locks and unlocks till this action is performed
+///
+/// You can only change type of Properties you created
+pub fn change_property_type(handle: &PluginHandle, prop_handle: &PropertyHandle, value: Property) -> DataStoreReturnCode {
+    let res = unsafe {
+        sys::change_property_type(handle.get_ptr(), prop_handle.get_inner(), value.to_c())
     };
 
     DataStoreReturnCode::from(res)

@@ -161,7 +161,7 @@ pub extern "C" fn generate_property_handle(name: *mut c_char) -> ReturnValue<Pro
 
 /// Deletes a certain property based on the Handle (or at least queues it)
 ///
-/// Same as create, this is (after checking that the property exists) will the send to the loader
+/// Same as create, this (after checking that the property exists) will send a Message to the loader
 /// which locks the plugin to perform the delete. The queue length is unknown, so it can take
 /// multiple locks and unlocks till this action is performed
 #[no_mangle]
@@ -170,6 +170,29 @@ pub extern "C" fn delete_property(handle: *mut PluginHandle, prop_handle: Proper
 
     if prop_handle.plugin == han.id && han.properties.contains_key(&prop_handle.property) {
         if let Err(e) = han.sender.send(LoaderMessage::PropertyDelete(prop_handle.property)) {
+            error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
+            DataStoreReturnCode::DataCorrupted
+        } else {
+            DataStoreReturnCode::Ok
+        }
+    } else {
+        DataStoreReturnCode::DoesNotExist
+    }
+}
+
+/// This changes the type of a property (more like queues the action)
+///
+/// Same as create and delete, this (after checking that the property exists) will send a Message to the loader
+/// which locks the plugin to perform the change over. The queue length is unknown, so it can take
+/// multiple locks and unlocks till this action is performed
+#[no_mangle]
+pub extern "C" fn change_property_type(handle: *mut PluginHandle, prop_handle: PropertyHandle, value: Property) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+
+    if prop_handle.plugin == han.id && han.properties.contains_key(&prop_handle.property) {
+        let cont = utils::ValueContainer::new(value, han);
+
+        if let Err(e) = han.sender.send(LoaderMessage::PropertyTypeChange(prop_handle.property, cont, true)) {
             error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
             DataStoreReturnCode::DataCorrupted
         } else {

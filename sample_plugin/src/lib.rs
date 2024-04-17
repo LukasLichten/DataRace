@@ -89,22 +89,24 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
             let res = api::update_property(&handle, &PROP_HANDLE, Property::Int(2));
             if res != DataStoreReturnCode::Ok {
                 api::log_error(&handle, res);
+                return Ok(()); // We currently have no state, so we can't tell if this is the
             }
 
             match api::get_property_value(&handle, &PROP_HANDLE) {
                 Ok(val) => {
-                    let later = std::time::Instant::now();
-                    api::log_info(&handle, format!("Value is {} in {}ns", val.to_string(), (later - start).as_nanos()));
+                    api::log_info(&handle, format!("Value is {}", val.to_string()));
                 },
                 Err(e) => {
                     api::log_error(&handle, e);
                 }
             }
 
-            let res = api::delete_property(&handle, &PROP_HANDLE);
+            let later = std::time::Instant::now();
+
+            let res = api::change_property_type(&handle, &PROP_HANDLE, Property::Duration(i64::try_from((later-start).as_micros()).expect("impossible to be out of bounds")));
             match res {
                 DataStoreReturnCode::Ok => {
-                    api::log_info(&handle, "Deleted");
+                    api::log_info(&handle, "Changed");
                 },
                 _ => {
                     api::log_error(&handle, res);

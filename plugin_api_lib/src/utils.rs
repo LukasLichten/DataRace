@@ -62,6 +62,11 @@ impl PropertyContainer {
     pub(crate) fn read(&self) -> Property {
         self.value.read()
     }
+
+    pub(crate) fn swap_container(&mut self, container: ValueContainer, allow_modify: bool) {
+        self.value = container;
+        self.allow_modify = allow_modify;
+    }
 }
 
 #[derive(Debug)]
@@ -78,7 +83,7 @@ const SAVE_ORDERING: Ordering = Ordering::Release;
 const READ_ORDERING: Ordering = Ordering::Acquire;
 
 impl ValueContainer {
-    fn new(val: Property, plugin_handle: &PluginHandle) -> Self {
+    pub(crate) fn new(val: Property, plugin_handle: &PluginHandle) -> Self {
         let new = match val.sort {
             PropertyType::None => ValueContainer::None,
             PropertyType::Int => ValueContainer::Int(AtomicI64::default()),

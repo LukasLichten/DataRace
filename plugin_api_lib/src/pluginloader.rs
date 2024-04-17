@@ -132,12 +132,9 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
         // let _ = sender.as_async().send(Message::Polled).await;
         while let Ok(msg) = async_rec.recv().await {
             if let Err(e) = match msg {
-                LoaderMessage::PropertyCreate(id, container) => {
-                    create_property(&wrapper, &mut ptr_h, id, container)
-                },
-                LoaderMessage::PropertyDelete(id) => {
-                    delete_property(&wrapper, &mut ptr_h, id)
-                }
+                LoaderMessage::PropertyCreate(id, container) => create_property(&wrapper, &mut ptr_h, id, container),
+                LoaderMessage::PropertyTypeChange(id, val_container, allow_modify) => property_type_change(&wrapper, &mut ptr_h, id, val_container, allow_modify),
+                LoaderMessage::PropertyDelete(id) => delete_property(&wrapper, &mut ptr_h, id),
                 LoaderMessage::Shutdown => shutdown(&wrapper, &mut ptr_h),
                 LoaderMessage::Subscribe(prop_handle) => {
                     // // We will finish the polling so we add this prop handle to the list, then let
@@ -278,6 +275,7 @@ pub struct PluginWrapper {
 // Sketchup of what Message will internally become
 pub(crate) enum LoaderMessage {
     PropertyCreate(u64, utils::PropertyContainer),
+    PropertyTypeChange(u64, utils::ValueContainer, bool),
     PropertyDelete(u64),
     Subscribe(PropertyHandle),
     Unsubscribe(PropertyHandle),
@@ -361,6 +359,21 @@ fn create_property(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64, conta
         return Ok(());
     }
     handle.properties.insert(id, container);
+
+    Ok(())
+}
+
+fn property_type_change(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64, val_container: utils::ValueContainer, allow_modify: bool) -> Result<(), MsgProcessingError> {
+    send_lock(wrapper, ptr)?;
+    
+    let handle = get_mut_handle(ptr)?;
+
+    if let Some(cont) = handle.properties.get_mut(&id) {
+        cont.swap_container(val_container, allow_modify);
+    } else {
+        error!("Plugin {} failed to change type of property of id {}, it does not exist", handle.name, id);
+        return Ok(());
+    }
 
     Ok(())
 }
