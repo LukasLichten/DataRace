@@ -1,14 +1,9 @@
-use std::sync::{atomic::{AtomicU64, AtomicI64, AtomicBool, Ordering}, Arc};
-use std::hash::{Hasher,Hash};
-
-use log::{error, info};
-use tokio::sync::{RwLock, Mutex};
-use kanal::{AsyncSender, Receiver, Sender};
-use rand::{RngCore, SeedableRng};
-use rand_hc::Hc128Rng;
+use log::info;
+use tokio::sync::RwLock;
+use kanal::{AsyncSender, Sender};
 use hashbrown::HashMap;
 
-use crate::{pluginloader::LoaderMessage, utils::Value, DataStoreReturnCode, PluginHandle, PropertyHandle};
+use crate::{pluginloader::LoaderMessage, DataStoreReturnCode, PluginHandle};
 
 /// This is our centralized State
 pub(crate) struct DataStore {
@@ -24,14 +19,6 @@ impl DataStore {
             shutdown: false
         })
     }
-
-    // pub(crate) fn create_plugin(&mut self, name: String) -> Option<(Token, Receiver<Message>, Sender<Message>)> {
-    //     let (sx,rx) = kanal::unbounded();
-    //     
-    //     let token = self.register_plugin(name, sx.clone())?;
-    //
-    //     Some((token, rx, sx))
-    // }
 
     /// Reuses an existing channel
     pub(crate) fn register_plugin(&mut self, id: u64, sx: Sender<LoaderMessage>, handle: *mut PluginHandle) -> Option<()> {

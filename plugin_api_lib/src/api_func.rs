@@ -1,7 +1,7 @@
 use libc::c_char;
 use log::error;
 
-use crate::{pluginloader::{self, LoaderMessage}, utils, DataStoreReturnCode, Message, MessageType, PluginDescription, PluginHandle, Property, PropertyHandle, ReturnValue, API_VERSION};
+use crate::{pluginloader::LoaderMessage, utils, DataStoreReturnCode, Message, PluginDescription, PluginHandle, Property, PropertyHandle, ReturnValue, API_VERSION};
 
 
 macro_rules! get_handle {
@@ -128,13 +128,13 @@ pub extern "C" fn get_property_value(handle: *mut PluginHandle, prop_handle: Pro
 
     ReturnValue::from(if let Some(store) = han.subscriptions.get(&prop_handle) {
         Ok(store.read())
-    // } else if prop_handle.plugin == han.id {
-    //     // Values we created are also accessible
-    //     if let Some(cont) = han.properties.get(&prop_handle.property) {
-    //         Ok(cont.read())
-    //     } else {
-    //         Err(DataStoreReturnCode::DoesNotExist)
-    //     }
+    } else if prop_handle.plugin == han.id {
+        // Values we created are also accessible
+        if let Some(cont) = han.properties.get(&prop_handle.property) {
+            Ok(cont.read())
+        } else {
+            Err(DataStoreReturnCode::DoesNotExist)
+        }
     } else {
         Err(DataStoreReturnCode::DoesNotExist)
     })
@@ -342,7 +342,7 @@ pub extern "C" fn get_description(handle: *mut PluginHandle) -> PluginDescriptio
     PluginDescription {
         id: han.id,
         name: std::ffi::CString::new(han.name.clone()).expect("string is string").into_raw(),
-        version: [0,0,0],
+        version: han.version.clone(),
         api_version: API_VERSION,
     }
 }

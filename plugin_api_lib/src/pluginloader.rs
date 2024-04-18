@@ -6,7 +6,7 @@ use log::{error, info, debug};
 
 use tokio::task::JoinSet;
 
-use crate::{api_types, datastore::DataStore, utils::{self, Value}, DataStoreReturnCode, Message, MessageType, MessageValue, PluginHandle, PropertyHandle};
+use crate::{api_types, datastore::DataStore, utils, DataStoreReturnCode, Message, MessageType, MessageValue, PluginHandle, PropertyHandle};
 
 pub(crate) async fn load_all_plugins(datastore: &'static tokio::sync::RwLock<DataStore>) -> Result<JoinSet<()>,Box<dyn std::error::Error>> {
     let plugin_folder = PathBuf::from("./plugins/");
@@ -40,20 +40,6 @@ pub(crate) async fn load_all_plugins(datastore: &'static tokio::sync::RwLock<Dat
 
  
     Ok(plugin_task_handles)
-}
-
-macro_rules! send_update {
-    ($wrapper:ident, $ptr_h:ident, $msg: ident) => {
-        if let Ok(msg) = api_types::Message::try_from($msg) {
-            if $wrapper.update($ptr_h.ptr, msg) != 0 {
-                error!("Plugin {} failed on update", get_plugin_name(&$ptr_h));
-                break;
-            }     
-        } else {
-            // What do we do if the parse is not okay? idk...
-            error!("Failed to parse message ");
-        }
-    };
 }
 
 async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataStore>) {
@@ -94,16 +80,12 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
             return;
         };
 
-
-        // TODO use version number
-
-        drop(desc); // drop is importantent, name ptr is pointing at freed memory
-        
-
         // Creates PluginHandle
         let (sender, receiver) = utils::get_message_channel();
-        let handle = PluginHandle::new(name, id, datastore, sender.clone(), wrapper.free_string.clone());
+        let handle = PluginHandle::new(name, id, datastore, sender.clone(), wrapper.free_string.clone(), desc.version);
         let mut ptr_h = PtrWrapper { ptr: Box::into_raw(Box::new(handle)), is_locked: false, subscribers: HashMap::default() };
+
+        drop(desc); // drop is importantent, name ptr is pointing at freed memory
 
         let mut w_store = datastore.write().await;
         if w_store.register_plugin(id, sender.clone(), ptr_h.ptr).is_none() {
@@ -141,16 +123,16 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
                 LoaderMessage::UpdateSubscription(prop_handle, val_container) => update_subscription(&wrapper, &mut ptr_h, prop_handle, val_container),
                 LoaderMessage::Unsubscribe(prop_handle) => unsubscribe(&wrapper, &mut ptr_h, prop_handle).await,
                 LoaderMessage::HasUnsubscribed(id, prop_handle) => has_unsubscribed(&wrapper, &mut ptr_h, prop_handle, id),
-                LoaderMessage::Update(prop_handle, value) => {
-                    let msg = LoaderMessage::Update(prop_handle, value);
-                    send_update!(wrapper, ptr_h, msg);
-                    Ok(())
-                },
-                LoaderMessage::Removed(prop_handle) => {
-                    let msg = LoaderMessage::Removed(prop_handle);
-                    send_update!(wrapper, ptr_h, msg);
-                    Ok(())
-                }
+                // LoaderMessage::Update(prop_handle, value) => {
+                //     let msg = LoaderMessage::Update(prop_handle, value);
+                //     send_update!(wrapper, ptr_h, msg);
+                //     Ok(())
+                // },
+                // LoaderMessage::Removed(prop_handle) => {
+                //     let msg = LoaderMessage::Removed(prop_handle);
+                //     send_update!(wrapper, ptr_h, msg);
+                //     Ok(())
+                // }
             } {
                 // log out the error and exit loop
                 match e {
@@ -229,8 +211,8 @@ pub(crate) enum LoaderMessage {
     UpdateSubscription(PropertyHandle, utils::ValueContainer),
     Unsubscribe(PropertyHandle),
     HasUnsubscribed(u64, PropertyHandle),
-    Update(PropertyHandle, Value),
-    Removed(PropertyHandle),
+    // Update(PropertyHandle, Value),
+    // Removed(PropertyHandle),
     Shutdown
 
 }

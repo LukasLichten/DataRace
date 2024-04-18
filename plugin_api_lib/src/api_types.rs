@@ -1,4 +1,4 @@
-use std::{ffi::CString, mem::ManuallyDrop, sync::Arc};
+use std::mem::ManuallyDrop;
 
 use libc::c_char;
 use crate::utils; 
@@ -12,6 +12,7 @@ pub struct PluginHandle {
     pub(crate) subscriptions: HashMap<PropertyHandle, utils::ValueContainer>,
     pub(crate) properties: HashMap<u64, utils::PropertyContainer>,
     pub(crate) sender: kanal::Sender<crate::pluginloader::LoaderMessage>,
+    pub(crate) version: [u16;3],
     free_string: extern "C" fn(ptr: *mut libc::c_char),
     lock: std::sync::atomic::AtomicU32
 }
@@ -21,7 +22,9 @@ impl PluginHandle {
         id: u64,
         datastore: &'static tokio::sync::RwLock<crate::datastore::DataStore>,
         sender: kanal::Sender<crate::pluginloader::LoaderMessage>,
-        free_string: extern "C" fn(ptr: *mut libc::c_char)) -> PluginHandle {
+        free_string: extern "C" fn(ptr: *mut libc::c_char),
+        version: [u16;3]
+    ) -> PluginHandle {
         PluginHandle {
             name,
             datastore,
@@ -30,6 +33,7 @@ impl PluginHandle {
             properties: HashMap::default(),
             free_string,
             sender,
+            version,
             lock: std::sync::atomic::AtomicU32::new(0)
         }
     }
@@ -54,6 +58,7 @@ impl PluginHandle {
         self.lock.store(0, std::sync::atomic::Ordering::Release)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn is_locked(&self) -> bool {
         self.lock.load(std::sync::atomic::Ordering::Acquire) != 1
     }
@@ -179,28 +184,6 @@ impl Default for Property {
     }
 }
 
-impl TryFrom<crate::utils::Value> for Property {
-    type Error = DataStoreReturnCode;
-
-    fn try_from(value: utils::Value) -> Result<Self, Self::Error> {
-        Ok(match value {
-            utils::Value::None => Property::default(),
-            utils::Value::Int(i) => Property { sort: PropertyType::Int, value: PropertyValue { integer: i } },
-            utils::Value::Float(f) => Property { sort: PropertyType::Float, value: PropertyValue { decimal: f64::from_be_bytes(f.to_be_bytes()) } },
-            utils::Value::Bool(b) => Property { sort: PropertyType::Boolean, value: PropertyValue { boolean: b } },
-            utils::Value::Str(s) => {
-                if let Ok(val) = CString::new(s.as_str().to_string()) {
-                    let ptr = val.into_raw();
-                    Property { sort: PropertyType::Str, value: PropertyValue { str: ptr } }
-                } else {
-                    return Err(DataStoreReturnCode::DataCorrupted);
-                }
-            },
-            utils::Value::Dur(d) => Property { sort: PropertyType::Duration, value: PropertyValue { dur: d }}
-        })
-    }
-}
-
 #[repr(C)]
 pub struct Message {
     pub sort: MessageType,
@@ -209,8 +192,8 @@ pub struct Message {
 
 #[repr(u8)]
 pub enum MessageType {
-    Update = 0,
-    Removed = 1,
+    // Update = 0,
+    // Removed = 1,
     Lock = 10,
     Unlock = 11,
     Shutdown = 20
@@ -229,37 +212,37 @@ pub struct UpdateValue {
     pub value: Property
 }
 
-impl TryFrom<crate::pluginloader::LoaderMessage> for Message {
-    type Error = ();
+// impl TryFrom<crate::pluginloader::LoaderMessage> for Message {
+//     type Error = ();
+//
+//     fn try_from(value: crate::pluginloader::LoaderMessage) -> Result<Self, Self::Error> {
+//         Ok(match value {
+//             crate::pluginloader::LoaderMessage::Update(handle, value) => {
+//                 if let Ok(value) = Property::try_from(value) {
+//                     Message { sort: MessageType::Update, value: MessageValue { update: ManuallyDrop::new(UpdateValue { handle, value } )  } }
+//                 } else {
+//                     return Err(());
+//                 }
+//             },
+//             crate::pluginloader::LoaderMessage::Removed(handle) => {
+//                 Message { sort: MessageType::Removed, value: MessageValue { removed_property: handle }}
+//
+//             },
+//             _ => return Err(())
+//         })
+//     }
+// }
 
-    fn try_from(value: crate::pluginloader::LoaderMessage) -> Result<Self, Self::Error> {
-        Ok(match value {
-            crate::pluginloader::LoaderMessage::Update(handle, value) => {
-                if let Ok(value) = Property::try_from(value) {
-                    Message { sort: MessageType::Update, value: MessageValue { update: ManuallyDrop::new(UpdateValue { handle, value } )  } }
-                } else {
-                    return Err(());
-                }
-            },
-            crate::pluginloader::LoaderMessage::Removed(handle) => {
-                Message { sort: MessageType::Removed, value: MessageValue { removed_property: handle }}
-
-            },
-            _ => return Err(())
-        })
-    }
-}
-
-impl Drop for Message {
-    fn drop(&mut self) {
-        match self.sort {
-            MessageType::Update => unsafe {
-                ManuallyDrop::drop(&mut self.value.update);
-            },
-            _ => ()
-        }
-    }
-}
+// impl Drop for Message {
+//     fn drop(&mut self) {
+//         match self.sort {
+//             MessageType::Update => unsafe {
+//                 ManuallyDrop::drop(&mut self.value.update);
+//             },
+//             _ => ()
+//         }
+//     }
+// }
 
 impl Default for UpdateValue {
     fn default() -> Self {

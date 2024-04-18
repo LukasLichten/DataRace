@@ -50,7 +50,7 @@ async fn on_connect(socket: SocketRef) {
         
         if let Authentication::Plugin { name } = data {
             // this is a plugin, we have to internally register it
-            let mut w_ds = store.datastore.write().await;
+            let w_ds = store.datastore.write().await;
 
             // if let Some(token) = w_ds.register_plugin(name.clone(), 0, store.sender.as_sync().clone()) {
             //     store.insert_auth(socket.id, Auth::Plugin(token, Arc::new(name))).await;

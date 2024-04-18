@@ -1,11 +1,11 @@
 use libc::c_char; 
-use std::{ffi::{CStr, CString}, sync::{Arc, atomic::{AtomicU64, AtomicI64, AtomicBool, Ordering}}};
-use kanal::{Sender, AsyncSender, Receiver};
+use std::{ffi::CStr, sync::{Arc, atomic::{AtomicU64, AtomicI64, AtomicBool, Ordering}}};
+use kanal::{Sender, Receiver};
 use highway::{HighwayHash, HighwayHasher, Key};
 
 use tokio::sync::Mutex;
 
-use crate::{pluginloader::LoaderMessage, PluginHandle, Property, PropertyHandle, PropertyType, PropertyValue};
+use crate::{pluginloader::LoaderMessage, PluginHandle, Property, PropertyType, PropertyValue};
 
 /// Simple way to aquire a String for a null terminating c_char ptr
 /// We do not optain ownership of the String, the owner has to deallocate it
@@ -103,17 +103,17 @@ impl ValueContainer {
     }
 
 
-    fn new_int(val: Value) -> ValueContainer {
-        // match val {
-        //     Value::None => ValueContainer::None,
-        //     Value::Int(i) => ValueContainer::Int(AtomicI64::new(i)),
-        //     Value::Float(f) => ValueContainer::Float(AtomicU64::new(f)),
-        //     Value::Bool(b) => ValueContainer::Bool(AtomicBool::new(b)),
-        //     Value::Str(s) => ValueContainer::Str(Mutex::new(s)),
-        //     Value::Dur(d) => ValueContainer::Dur(AtomicI64::new(d))
-        // }
-        ValueContainer::None
-    }
+    // fn new_int(val: Value) -> ValueContainer {
+    //     match val {
+    //         Value::None => ValueContainer::None,
+    //         Value::Int(i) => ValueContainer::Int(AtomicI64::new(i)),
+    //         Value::Float(f) => ValueContainer::Float(AtomicU64::new(f)),
+    //         Value::Bool(b) => ValueContainer::Bool(AtomicBool::new(b)),
+    //         Value::Str(s) => ValueContainer::Str(Mutex::new(s)),
+    //         Value::Dur(d) => ValueContainer::Dur(AtomicI64::new(d))
+    //     }
+    //     ValueContainer::None
+    // }
 
     fn update(&self, val: Property, plugin_handle: &PluginHandle) -> bool {
         match (val.sort, self) {
@@ -179,38 +179,38 @@ impl ValueContainer {
         }
     }
 
-    async fn update_int(&self, val: Value, prop_handle: &PropertyHandle) -> bool {
-        match (val,self) {
-            (Value::None, ValueContainer::None) => true,
-            (Value::Int(i), ValueContainer::Int(at)) => {
-                at.store(i, SAVE_ORDERING);
-                true
-            },
-            (Value::Float(f), ValueContainer::Float(at)) => {
-                at.store(f, SAVE_ORDERING);
-                true
-            },
-            (Value::Bool(b), ValueContainer::Bool(at)) => {
-                at.store(b, SAVE_ORDERING);
-                true
-            },
-            (Value::Str(s),ValueContainer::Str(mu)) => {
-                let mut res = mu.lock().await;
-                *res = s.clone();
-
-                // for (sub,_) in listener.iter() {
-                //     let _ = sub.send(Message::Update(prop_handle.clone(),Value::Str(s.clone()))).await;
-                // }
-
-                true
-            },
-            (Value::Dur(d), ValueContainer::Dur(at)) => {
-                at.store(d, SAVE_ORDERING);
-                true
-            },
-            _ => false,
-        }
-    }
+    // async fn update_int(&self, val: Value, prop_handle: &PropertyHandle) -> bool {
+    //     match (val,self) {
+    //         (Value::None, ValueContainer::None) => true,
+    //         (Value::Int(i), ValueContainer::Int(at)) => {
+    //             at.store(i, SAVE_ORDERING);
+    //             true
+    //         },
+    //         (Value::Float(f), ValueContainer::Float(at)) => {
+    //             at.store(f, SAVE_ORDERING);
+    //             true
+    //         },
+    //         (Value::Bool(b), ValueContainer::Bool(at)) => {
+    //             at.store(b, SAVE_ORDERING);
+    //             true
+    //         },
+    //         (Value::Str(s),ValueContainer::Str(mu)) => {
+    //             let mut res = mu.lock().await;
+    //             *res = s.clone();
+    //
+    //             // for (sub,_) in listener.iter() {
+    //             //     let _ = sub.send(Message::Update(prop_handle.clone(),Value::Str(s.clone()))).await;
+    //             // }
+    //
+    //             true
+    //         },
+    //         (Value::Dur(d), ValueContainer::Dur(at)) => {
+    //             at.store(d, SAVE_ORDERING);
+    //             true
+    //         },
+    //         _ => false,
+    //     }
+    // }
 
     pub(crate) fn read(&self) -> Property {
         match self {
@@ -240,20 +240,20 @@ impl ValueContainer {
         }
     }
 
-    async fn read_int(&self) -> Value {
-        match self {
-            ValueContainer::None => Value::None,
-            ValueContainer::Int(at) => Value::Int(at.load(READ_ORDERING)),
-            ValueContainer::Float(at) => Value::Float(at.load(READ_ORDERING)),
-            ValueContainer::Bool(at) => Value::Bool(at.load(READ_ORDERING)),
-            ValueContainer::Str(mu) => { 
-                let res = mu.lock().await;
-                let a = res.clone();
-                Value::Str(a)
-            },
-            ValueContainer::Dur(at) => Value::Dur(at.load(READ_ORDERING)),
-        }
-    }
+    // async fn read_int(&self) -> Value {
+    //     match self {
+    //         ValueContainer::None => Value::None,
+    //         ValueContainer::Int(at) => Value::Int(at.load(READ_ORDERING)),
+    //         ValueContainer::Float(at) => Value::Float(at.load(READ_ORDERING)),
+    //         ValueContainer::Bool(at) => Value::Bool(at.load(READ_ORDERING)),
+    //         ValueContainer::Str(mu) => { 
+    //             let res = mu.lock().await;
+    //             let a = res.clone();
+    //             Value::Str(a)
+    //         },
+    //         ValueContainer::Dur(at) => Value::Dur(at.load(READ_ORDERING)),
+    //     }
+    // }
 
     /// This generates a shallow clone, which still receives all the same value changes
     fn shallow_clone(&self) -> ValueContainer {
@@ -268,74 +268,6 @@ impl ValueContainer {
             ValueContainer::Str(mu) => todo!("string still needs to be implemented"),
             ValueContainer::Dur(a) => ValueContainer::Dur(a.clone())
         }
-    }
-}
-
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Value {
-    None,
-    Int(i64),
-    Float(u64),
-    Bool(bool),
-    Str(Arc<String>),
-    Dur(i64)
-}
-
-impl Value {
-    pub fn new(prop: Property) -> Value {
-        match prop.sort {
-            PropertyType::None => Value::None,
-            PropertyType::Int => {
-                let val = unsafe {
-                    prop.value.integer
-                };
-                Value::Int(val)
-            },
-            PropertyType::Float => {
-                let val = unsafe {
-                    prop.value.decimal
-                };
-                Value::Float(u64::from_be_bytes(val.to_be_bytes()))
-            },
-            PropertyType::Boolean => {
-                let val = unsafe {
-                    prop.value.boolean
-                };
-                Value::Bool(val)
-            },
-            PropertyType::Str => {
-                let ptr = unsafe {
-                    prop.value.str
-                };
-                if let Some(val) = get_string(ptr) {
-                    // I am not 100% sure we are properly disposing of the original cstring
-                    // Does to_string clone the data?
-                    // Does Arc clone the data?
-                    // we just call clone here so we can "safely" drop the Cstring
-                    let re = Value::Str(Arc::new(val.clone()));
-
-                    unsafe {
-                        // Deallocating resources a different allocater has allocated is ill
-                        // advised, but we had been given this object, we need to clean up too
-                        drop(CString::from_raw(ptr));
-                    }
-                    re
-                } else {
-                    Value::None
-                }
-            },
-            PropertyType::Duration => {
-                let val = unsafe {
-                    prop.value.dur
-                };
-                Value::Dur(val)
-            }
-        }
-
-        // Rust should deallocate the Property Object as we got ownership in the call, and passed
-        // it into this function
-        // All values besides String (which is a pointer we have deallocated) are usize or less
     }
 }
 

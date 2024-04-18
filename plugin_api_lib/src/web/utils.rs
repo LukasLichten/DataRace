@@ -61,3 +61,13 @@ impl SocketData {
         del
     }
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Value {
+    None,
+    Int(i64),
+    Float(u64),
+    Bool(bool),
+    Str(Arc<String>),
+    Dur(i64)
+}
