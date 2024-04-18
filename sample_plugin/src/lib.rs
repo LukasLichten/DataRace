@@ -32,7 +32,7 @@ fn handle_init(handle: PluginHandle) -> Result<(),String> {
     };
 
 
-    // api::subscribe_property(&handle, &PROP_HANDLE);
+    api::subscribe_property(&handle, &PROP_HANDLE);
     //
     // api::update_property(&handle, &PROP_HANDLE, Property::Int(1));
 

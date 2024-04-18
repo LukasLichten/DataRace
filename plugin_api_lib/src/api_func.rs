@@ -128,13 +128,13 @@ pub extern "C" fn get_property_value(handle: *mut PluginHandle, prop_handle: Pro
 
     ReturnValue::from(if let Some(store) = han.subscriptions.get(&prop_handle) {
         Ok(store.read())
-    } else if prop_handle.plugin == han.id {
-        // Values we created are also accessible
-        if let Some(cont) = han.properties.get(&prop_handle.property) {
-            Ok(cont.read())
-        } else {
-            Err(DataStoreReturnCode::DoesNotExist)
-        }
+    // } else if prop_handle.plugin == han.id {
+    //     // Values we created are also accessible
+    //     if let Some(cont) = han.properties.get(&prop_handle.property) {
+    //         Ok(cont.read())
+    //     } else {
+    //         Err(DataStoreReturnCode::DoesNotExist)
+    //     }
     } else {
         Err(DataStoreReturnCode::DoesNotExist)
     })
@@ -214,6 +214,8 @@ pub extern "C" fn change_property_type(handle: *mut PluginHandle, prop_handle: P
 #[no_mangle]
 pub extern "C" fn subscribe_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+
+    log::debug!("Hit subscribe");
     
     if let Err(e) = han.sender.send(LoaderMessage::Subscribe(prop_handle)) {
         error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
@@ -285,7 +287,8 @@ fn log_plugin_msg(handle: *mut PluginHandle, message: *mut c_char, log_level: lo
 /// Part of the point of this function is so the Message type is included in the generated header
 #[no_mangle]
 pub extern "C" fn reenqueue_message(handle: *mut PluginHandle, msg: Message) -> DataStoreReturnCode {
-    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let _han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let _msg = msg;
     
     // // need to reencode Message
     // let re_coded = match msg.sort {

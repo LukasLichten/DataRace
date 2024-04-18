@@ -1,6 +1,7 @@
 use std::{path::PathBuf, fs};
 
 use dlopen2::wrapper::{WrapperApi, Container};
+use hashbrown::HashMap;
 use log::{error, info, debug};
 
 use tokio::task::JoinSet;
@@ -102,7 +103,7 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
         // Creates PluginHandle
         let (sender, receiver) = utils::get_message_channel();
         let handle = PluginHandle::new(name, id, datastore, sender.clone(), wrapper.free_string.clone());
-        let mut ptr_h = PtrWrapper { ptr: Box::into_raw(Box::new(handle)), is_locked: false };
+        let mut ptr_h = PtrWrapper { ptr: Box::into_raw(Box::new(handle)), is_locked: false, subscribers: HashMap::default() };
 
         let mut w_store = datastore.write().await;
         if w_store.register_plugin(id, sender.clone(), ptr_h.ptr).is_none() {
@@ -132,15 +133,14 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
         while let Ok(msg) = async_rec.recv().await {
             if let Err(e) = match msg {
                 LoaderMessage::PropertyCreate(id, container) => create_property(&wrapper, &mut ptr_h, id, container),
-                LoaderMessage::PropertyTypeChange(id, val_container, allow_modify) => property_type_change(&wrapper, &mut ptr_h, id, val_container, allow_modify),
-                LoaderMessage::PropertyDelete(id) => delete_property(&wrapper, &mut ptr_h, id),
+                LoaderMessage::PropertyTypeChange(id, val_container, allow_modify) => property_type_change(&wrapper, &mut ptr_h, id, val_container, allow_modify).await,
+                LoaderMessage::PropertyDelete(id) => delete_property(&wrapper, &mut ptr_h, id).await,
                 LoaderMessage::Shutdown => shutdown(&wrapper, &mut ptr_h),
                 LoaderMessage::Subscribe(prop_handle) => subscribe_property_start(&wrapper, &mut ptr_h, prop_handle).await,
                 LoaderMessage::GenerateSubscribtion(id, prop_handle) => generate_subcription(&wrapper, &mut ptr_h, id, prop_handle).await,
                 LoaderMessage::UpdateSubscription(prop_handle, val_container) => update_subscription(&wrapper, &mut ptr_h, prop_handle, val_container),
-                LoaderMessage::Unsubscribe(prop_handle) => {
-                    Ok(())
-                },
+                LoaderMessage::Unsubscribe(prop_handle) => unsubscribe(&wrapper, &mut ptr_h, prop_handle).await,
+                LoaderMessage::HasUnsubscribed(id, prop_handle) => has_unsubscribed(&wrapper, &mut ptr_h, prop_handle, id),
                 LoaderMessage::Update(prop_handle, value) => {
                     let msg = LoaderMessage::Update(prop_handle, value);
                     send_update!(wrapper, ptr_h, msg);
@@ -169,6 +169,7 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
             }
 
             if async_rec.is_empty() && ptr_h.is_locked {
+                // debug!("Unlock triggered");
                 send_unlock(&wrapper, &mut ptr_h).unwrap();
             }
         }
@@ -193,7 +194,8 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
 // We have to do this, as you can otherwise not await anything
 struct PtrWrapper {
     ptr: *mut PluginHandle,
-    is_locked: bool
+    is_locked: bool,
+    subscribers: HashMap<u64, Vec<u64>>
 }
 
 unsafe impl Send for PtrWrapper { }
@@ -226,6 +228,7 @@ pub(crate) enum LoaderMessage {
     GenerateSubscribtion(u64, PropertyHandle),
     UpdateSubscription(PropertyHandle, utils::ValueContainer),
     Unsubscribe(PropertyHandle),
+    HasUnsubscribed(u64, PropertyHandle),
     Update(PropertyHandle, Value),
     Removed(PropertyHandle),
     Shutdown
@@ -260,12 +263,30 @@ fn get_handle<'a>(ptr: &'a PtrWrapper) -> Result<&'a PluginHandle, MsgProcessing
     }
 }
 
- async fn send_plugin_message(ptr: &PtrWrapper, id: u64, msg: LoaderMessage) -> Result<bool, MsgProcessingError> {
+async fn send_plugin_message(ptr: &PtrWrapper, id: u64, msg: LoaderMessage) -> Result<bool, MsgProcessingError> {
     let handle = get_handle(ptr)?;
     
     let ds_r = handle.datastore.read().await;
 
     Ok(ds_r.send_message_to_plugin(id, msg).await)
+}
+
+async fn send_message_to_all_subs<D>(ptr: &PtrWrapper, prop_id: u64, msg_factory: D) -> Result<(), MsgProcessingError>
+where
+    D: Fn() -> LoaderMessage
+{
+    let handle = get_handle(ptr)?;
+    
+
+    if let Some(subs) = ptr.subscribers.get(&prop_id) {
+        let ds_r = handle.datastore.read().await;
+
+        for su in subs {
+            ds_r.send_message_to_plugin(*su, msg_factory()).await;
+        }
+    }
+
+    Ok(())
 }
 
 /// Serves to check if the handle is locked, if not change that
@@ -318,13 +339,19 @@ fn create_property(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64, conta
     Ok(())
 }
 
-fn property_type_change(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64, val_container: utils::ValueContainer, allow_modify: bool) -> Result<(), MsgProcessingError> {
+async fn property_type_change(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64, val_container: utils::ValueContainer, allow_modify: bool) -> Result<(), MsgProcessingError> {
     send_lock(wrapper, ptr)?;
     
     let handle = get_mut_handle(ptr)?;
 
     if let Some(cont) = handle.properties.get_mut(&id) {
         cont.swap_container(val_container, allow_modify);
+
+        // Technically we can unlock while sending messages, practically we have to see if there is
+        // any gain
+        send_message_to_all_subs(ptr, id, || {
+            LoaderMessage::UpdateSubscription(PropertyHandle { plugin: handle.id, property: id }, cont.clone_container())
+        }).await?;
     } else {
         error!("Plugin {} failed to change type of property of id {}, it does not exist", handle.name, id);
         return Ok(());
@@ -333,7 +360,7 @@ fn property_type_change(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64, 
     Ok(())
 }
 
-fn delete_property(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64) -> Result<(), MsgProcessingError> {
+async fn delete_property(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64) -> Result<(), MsgProcessingError> {
     send_lock(wrapper, ptr)?;
     let handle = get_mut_handle(ptr)?;
     
@@ -343,6 +370,13 @@ fn delete_property(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64) -> Re
         return Ok(());
     }
     handle.properties.remove(&id);
+
+    // Technically we can unlock while sending messages, practically we have to see if there is
+    // any gain
+    send_message_to_all_subs(ptr, id, || {
+        LoaderMessage::Unsubscribe(PropertyHandle { plugin: handle.id, property: id })
+    }).await?;
+    ptr.subscribers.remove(&id);
 
     Ok(())
 }
@@ -357,8 +391,11 @@ fn shutdown(wrapper: &PluginWrapper, ptr: &mut PtrWrapper) -> Result<(), MsgProc
     Err(MsgProcessingError::Shutdown)
 }
 
+/// Subscribing is a 3 step process, this is done by the sub, first we send a message to the property owner
 async fn subscribe_property_start(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, prop_handle: PropertyHandle) -> Result<(), MsgProcessingError> {
     send_unlock(wrapper, ptr)?;
+
+    // debug!("Entered Step 1");
 
     if !send_plugin_message(ptr, prop_handle.plugin, LoaderMessage::GenerateSubscribtion(get_handle(ptr)?.id, prop_handle)).await? {
         error!("Plugin {} failed to send message to generate subscription to plugin of id {} (likely plugin does not exist)", get_plugin_name(ptr), prop_handle.plugin);
@@ -368,8 +405,12 @@ async fn subscribe_property_start(wrapper: &PluginWrapper, ptr: &mut PtrWrapper,
     Ok(())
 }
 
+/// This is Step 2, this is run by the owner, generates a shallow copy of the ValueContainer and
+/// sends it back
 async fn generate_subcription(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64, prop_handle: PropertyHandle) -> Result<(), MsgProcessingError> {
     send_unlock(wrapper, ptr)?;
+
+    // debug!("Entered Step 2");
 
     let handle = get_handle(ptr)?;
     if prop_handle.plugin != handle.id {
@@ -380,7 +421,7 @@ async fn generate_subcription(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id:
     let val_container = if let Some(cont) = handle.properties.get(&prop_handle.property) {
        cont.clone_container() 
     } else {
-        error!("Plugin {} was request property of id {}, but it does not exist", handle.name, prop_handle.property);
+        error!("Plugin {} was requested property of id {} by plugin of id {}, but it does not exist", handle.name, prop_handle.property, id);
         return Ok(());
     };
 
@@ -389,19 +430,69 @@ async fn generate_subcription(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id:
         return Ok(());
     }
 
-    // TODO add a database of who is subscribed to what,
-    // so we can inform them if the type changes/is deleted
+    // Adding the subscription so we can keep type changes up to date
+    // We don't need to lock, due to us not writing to the pointer, the sub list is stored in the
+    // wrapper, aka only this loader has access, and has anyway always mut access
+    if let Some(subs) = ptr.subscribers.get_mut(&prop_handle.property) {
+        subs.push(id);
+    } else {
+        ptr.subscribers.insert(prop_handle.property, vec![id]);
+    }
 
     Ok(())
 }
 
+/// This is Step 3, run by the sub, we add the value container to our subscription list (for which
+/// we need to lock)
+/// This is also used to update the subscription, for example when the owner changed type
 fn update_subscription(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, prop_handle: PropertyHandle, val_container: utils::ValueContainer) -> Result<(), MsgProcessingError> {
     send_lock(wrapper, ptr)?;
 
+    // debug!("Entered Step 3");
+
     let handle = get_mut_handle(ptr)?;
-    // We do in this case allow overrides
+    // We do in this to allow overrides
     handle.subscriptions.insert(prop_handle, val_container);
 
     Ok(())
 }
 
+async fn unsubscribe(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, prop_handle: PropertyHandle) -> Result<(), MsgProcessingError> {
+    send_lock(wrapper, ptr)?;
+    
+    let handle = get_mut_handle(ptr)?;
+
+    if !handle.subscriptions.contains_key(&prop_handle) {
+        error!("Plugin {} failed to unsubscribe from property of plugin id {} property id {}: we weren't subscribed", get_plugin_name(ptr), prop_handle.plugin, prop_handle.property);
+        return Ok(());
+    }
+
+    handle.subscriptions.remove(&prop_handle);
+
+    if !send_plugin_message(ptr, prop_handle.plugin, LoaderMessage::HasUnsubscribed(handle.id, prop_handle)).await? {
+        error!("Plugin {} failed to send reply message to containing subscription to plugin of id {}", get_plugin_name(ptr), prop_handle.plugin);
+        return Ok(());
+    }
+
+
+    Ok(())
+}
+
+fn has_unsubscribed(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, prop_handle: PropertyHandle, id: u64) -> Result<(), MsgProcessingError> {
+    send_unlock(wrapper, ptr)?;
+
+    let handle = get_handle(ptr)?;
+    if prop_handle.plugin != handle.id {
+        error!("Plugin {} (id {}) somehow was asked to remove subscriber from a property of plugin id {}", handle.name, handle.id, prop_handle.plugin);
+        return Ok(());
+    }
+
+    if let Some(subs) = ptr.subscribers.get_mut(&prop_handle.property) {
+        subs.retain(|x| *x != id);
+    } else {
+        // This case is not an error, and will happen due to delete_property sending unsubscribes,
+        // which send this message
+    }
+
+    Ok(())
+}
