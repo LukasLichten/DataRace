@@ -113,6 +113,7 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
 
         // let _ = sender.as_async().send(Message::Polled).await;
         while let Ok(msg) = async_rec.recv().await {
+            // dbg!(&msg);
             if let Err(e) = match msg {
                 LoaderMessage::PropertyCreate(id, container) => create_property(&wrapper, &mut ptr_h, id, container),
                 LoaderMessage::PropertyTypeChange(id, val_container, allow_modify) => property_type_change(&wrapper, &mut ptr_h, id, val_container, allow_modify).await,
@@ -202,6 +203,7 @@ pub struct PluginWrapper {
 }
 
 // Sketchup of what Message will internally become
+#[derive(Debug)]
 pub(crate) enum LoaderMessage {
     PropertyCreate(u64, utils::PropertyContainer),
     PropertyTypeChange(u64, utils::ValueContainer, bool),

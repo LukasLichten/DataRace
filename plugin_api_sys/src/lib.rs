@@ -19,9 +19,9 @@ pub use bindings::deallocate_string;
 
 //Data
 // Enums
-pub use bindings::{DataStoreReturnCode, DataStoreReturnCode_Ok, DataStoreReturnCode_NotAuthenticated, DataStoreReturnCode_AlreadyExists, DataStoreReturnCode_DoesNotExist, DataStoreReturnCode_OutdatedPropertyHandle, DataStoreReturnCode_TypeMissmatch, DataStoreReturnCode_NotImplemented, DataStoreReturnCode_ParameterCorrupted, DataStoreReturnCode_DataCorrupted};
+pub use bindings::{DataStoreReturnCode, DataStoreReturnCode_Ok, DataStoreReturnCode_NotAuthenticated, DataStoreReturnCode_AlreadyExists, DataStoreReturnCode_DoesNotExist, DataStoreReturnCode_TypeMissmatch, DataStoreReturnCode_NotImplemented, DataStoreReturnCode_ParameterCorrupted, DataStoreReturnCode_DataCorrupted};
 pub use bindings::{PropertyType, PropertyType_None, PropertyType_Int, PropertyType_Float, PropertyType_Boolean, PropertyType_Str, PropertyType_Duration};
-pub use bindings::{MessageType, MessageType_Update, MessageType_Removed, MessageType_Lock, MessageType_Unlock, MessageType_Shutdown}; 
+pub use bindings::{MessageType, MessageType_Lock, MessageType_Unlock, MessageType_Shutdown}; 
 
 // Message
 pub use bindings::{Message, MessageValue};

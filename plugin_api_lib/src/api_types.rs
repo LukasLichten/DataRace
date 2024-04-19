@@ -72,7 +72,6 @@ pub enum DataStoreReturnCode {
     NotAuthenticated = 1,
     AlreadyExists = 2,
     DoesNotExist = 3,
-    OutdatedPropertyHandle = 4, //  TODO: Remove handle
     TypeMissmatch = 5,
     NotImplemented = 6,
     ParameterCorrupted = 10, 

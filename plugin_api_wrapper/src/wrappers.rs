@@ -22,7 +22,7 @@ impl PluginHandle {
 }
 
 /// A Handle for accessing Property used when writing, reading and subscribing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct PropertyHandle {
     inner: sys::PropertyHandle
 }
@@ -55,7 +55,7 @@ impl PartialEq for PropertyHandle {
 /// This type is used for setting and getting Values
 ///
 /// Note:
-/// Duration is messured in micro seconds (1s = 1,000 millis = 1,000,000 = micros), and is signed
+/// Duration is messured in micro seconds (1s = 1,000 ms = 1,000,000 us), and is signed
 /// So, while std::time::Duration does NOT support negative timespans, this DOES
 #[derive(Debug, Clone)]
 pub enum Property {
@@ -159,7 +159,6 @@ pub enum DataStoreReturnCode {
     NotAuthenticated = 1,
     AlreadyExists = 2,
     DoesNotExist = 3,
-    OutdatedPropertyHandle = 4,
     TypeMissmatch = 5,
     NotImplemented = 6,
     ParameterCorrcupted = 10,
@@ -175,7 +174,6 @@ impl From<sys::DataStoreReturnCode> for DataStoreReturnCode {
             sys::DataStoreReturnCode_NotAuthenticated => DataStoreReturnCode::NotAuthenticated,
             sys::DataStoreReturnCode_AlreadyExists => DataStoreReturnCode::AlreadyExists,
             sys::DataStoreReturnCode_DoesNotExist => DataStoreReturnCode::DoesNotExist,
-            sys::DataStoreReturnCode_OutdatedPropertyHandle => DataStoreReturnCode::OutdatedPropertyHandle,
             sys::DataStoreReturnCode_TypeMissmatch => DataStoreReturnCode::TypeMissmatch,
             sys::DataStoreReturnCode_NotImplemented => DataStoreReturnCode::NotImplemented,
             sys::DataStoreReturnCode_ParameterCorrupted => DataStoreReturnCode::ParameterCorrcupted,
@@ -192,11 +190,10 @@ impl Display for DataStoreReturnCode {
             DataStoreReturnCode::NotAuthenticated => "Action denied: Lack of authority",
             DataStoreReturnCode::AlreadyExists => "Action failed: An Item with this designation already exists",
             DataStoreReturnCode::DoesNotExist => "Action failed: Can not access item that does not exist",
-            DataStoreReturnCode::OutdatedPropertyHandle => "Action failed: PropertyHandle no longer points to the correct item, it might have been renamed or removed. Try requesting a new Handle",
             DataStoreReturnCode::TypeMissmatch => "Action failed: You can only use the same type for updates as you created it with (or use change_property_type)",
             DataStoreReturnCode::NotImplemented => "Action denied: This function has to still be implemented",
             DataStoreReturnCode::ParameterCorrcupted => "Action failed: Parameters are inproperly formated or otherwise incorrect",
-            DataStoreReturnCode::DataCorrupted => "Error: Unable to parse input Data. This can indicate a bad cstring parameter, but also a corrupted PluginHandle or Datastore, which are non recoverable",
+            DataStoreReturnCode::DataCorrupted => "Error: Unable to parse input Data. This indicates a corrupted PluginHandle or Datastore, which are non recoverable",
             DataStoreReturnCode::Unknown => "Action failed for an unknown reason. Plugin is too out of date to know this message, possibly the reason for the Error"
         })
     }
@@ -207,8 +204,10 @@ pub enum Message {
     Lock,
     Unlock,
     Shutdown,
-    Update(PropertyHandle, Property),
-    Removed(PropertyHandle),
+
+    // Update(PropertyHandle, Property),
+    // Remove(PropertyHandle),
+
 
     Unknown
 }
@@ -219,20 +218,20 @@ impl From<sys::Message> for Message {
             sys::MessageType_Shutdown => Message::Shutdown,
             sys::MessageType_Lock => Message::Lock,
             sys::MessageType_Unlock => Message::Unlock,
-            sys::MessageType_Update => {
-                unsafe {
-                    let val = value.value.update;
-                    
-                    Message::Update(PropertyHandle::new(val.handle), Property::new(val.value))
-                }
-            },
-            sys::MessageType_Removed => {
-                unsafe {
-                    let val = value.value.removed_property;
-                    
-                    Message::Removed(PropertyHandle::new(val))
-                }
-            },
+            // sys::MessageType_Update => {
+            //     unsafe {
+            //         let val = value.value.update;
+            //         
+            //         Message::Update(PropertyHandle::new(val.handle), Property::new(val.value))
+            //     }
+            // },
+            // sys::MessageType_Removed => {
+            //     unsafe {
+            //         let val = value.value.removed_property;
+            //         
+            //         Message::Removed(PropertyHandle::new(val))
+            //     }
+            // },
             _ => Message::Unknown
         }
     }

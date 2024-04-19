@@ -1,9 +1,7 @@
 use libc::c_char; 
-use std::{ffi::CStr, sync::{Arc, atomic::{AtomicU64, AtomicI64, AtomicBool, Ordering}}};
+use std::{ffi::{CStr, CString}, sync::{atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering}, Arc, RwLock}};
 use kanal::{Sender, Receiver};
 use highway::{HighwayHash, HighwayHasher, Key};
-
-use tokio::sync::Mutex;
 
 use crate::{pluginloader::LoaderMessage, PluginHandle, Property, PropertyType, PropertyValue};
 
@@ -80,7 +78,7 @@ pub(crate) enum ValueContainer {
     Int(Arc<AtomicI64>),
     Float(Arc<AtomicU64>),
     Bool(Arc<AtomicBool>),
-    Str(Mutex<Arc<String>>),
+    Str(Arc<RwLock<String>>),
     Dur(Arc<AtomicI64>)
 }
 
@@ -94,7 +92,7 @@ impl ValueContainer {
             PropertyType::Int => ValueContainer::Int(Arc::default()),
             PropertyType::Float => ValueContainer::Float(Arc::default()),
             PropertyType::Boolean => ValueContainer::Bool(Arc::default()),
-            PropertyType::Str => ValueContainer::Str(Mutex::default()),
+            PropertyType::Str => ValueContainer::Str(Arc::default()),
             PropertyType::Duration => ValueContainer::Dur(Arc::default())
         };
         new.update(val, plugin_handle);
@@ -136,7 +134,7 @@ impl ValueContainer {
                 at.store(b, SAVE_ORDERING);
                 true
             },
-            (PropertyType::Str, ValueContainer::Str(mu)) => {
+            (PropertyType::Str, ValueContainer::Str(store)) => {
                 let ptr = unsafe {
                     val.value.str
                 };
@@ -155,9 +153,15 @@ impl ValueContainer {
                     return false;
                 };
 
-                // TODO deal with async locking
-                let _res = mu.lock();
-                // *res = str;
+                let mut res = match store.write() {
+                    Ok(res) => res,
+                    Err(e) => {
+                        store.clear_poison();
+                        e.into_inner()
+                    }
+                };
+                *res = str;
+                drop(res);
 
                 false
             },
@@ -230,7 +234,30 @@ impl ValueContainer {
                 sort: PropertyType::Boolean,
                 value: PropertyValue { boolean: at.load(READ_ORDERING) }
             },
-            ValueContainer::Str(mu) => Property::default(),
+            ValueContainer::Str(store) => {
+                let res = match store.read() {
+                    Ok(res) => {
+                        res.clone()
+                    },
+                    Err(_) => {
+                        // As we don't have write access, and there seems to be poison, we return a
+                        // blank string as fallback, as technically there is no garantee the string
+                        // object stored is in one piece.
+                        // But in reality this case should be pratically impossible, we only write
+                        // a single string while holding this handle, this should never go wrong
+                        "".to_string()
+                    }
+                };
+                
+                
+                let raw = CString::new(res).expect("string is string").into_raw();
+
+                Property {
+                    sort: PropertyType::Str,
+                    value: PropertyValue { str: raw }
+                }
+                
+            },
             ValueContainer::Dur(at) => {
                 Property {
                     sort: PropertyType::Duration,
@@ -265,7 +292,7 @@ impl ValueContainer {
             },
             ValueContainer::Float(a) => ValueContainer::Float(a.clone()),
             ValueContainer::Bool(a) => ValueContainer::Bool(a.clone()),
-            ValueContainer::Str(mu) => todo!("string still needs to be implemented"),
+            ValueContainer::Str(a) => ValueContainer::Str(a.clone()),
             ValueContainer::Dur(a) => ValueContainer::Dur(a.clone())
         }
     }

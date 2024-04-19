@@ -27,11 +27,13 @@ pub extern "C" fn init(handle: *mut datarace_plugin_api_wrapper::reexport::Plugi
     match res {
         Ok(Ok(_)) => 0,
         Ok(Err(text)) => {
-            datarace_plugin_api_wrapper::api::log_error(&datarace_plugin_api_wrapper::wrappers::PluginHandle::new(handle), text.to_string());
+            let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::new(handle);
+            han.log_error(text.to_string());
             1
         },
         Err(_) => {
-            datarace_plugin_api_wrapper::api::log_error(&datarace_plugin_api_wrapper::wrappers::PluginHandle::new(handle), "Plugin Init Paniced!");
+            let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::new(handle);
+            han.log_error("Plugin Init Paniced!");
             10
         }
     }
@@ -156,11 +158,13 @@ pub extern "C" fn update(handle: *mut datarace_plugin_api_wrapper::reexport::Plu
     match res {
         Ok(Ok(_)) => 0,
         Ok(Err(text)) => {
-            datarace_plugin_api_wrapper::api::log_error(&datarace_plugin_api_wrapper::wrappers::PluginHandle::new(handle), text.to_string());
+            let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::new(handle);
+            han.log_error(text.to_string());
             1
         },
         Err(_) => {
-            datarace_plugin_api_wrapper::api::log_error(&datarace_plugin_api_wrapper::wrappers::PluginHandle::new(handle), "Plugin Update Paniced!");
+            let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::new(handle);
+            han.log_error("Plugin Update Paniced!");
             10
         }
     }
