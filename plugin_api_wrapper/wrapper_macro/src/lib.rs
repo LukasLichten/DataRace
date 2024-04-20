@@ -1,10 +1,54 @@
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned, ToTokens};
-use syn::{parse::{Parse, ParseStream}, parse_macro_input, Ident, LitInt, LitStr, Token};
+use syn::{parse::{Parse, ParseStream}, parse_macro_input, Ident, LitBool, LitInt, LitStr, Token};
 
-/// Generates the init function REQUIRED for your plugin <br>
-/// Pass in the name of your function that will handle the startup<br>
-/// This function needs to take a wrapper::PluginHandle as parameter, and return a Result<(),String><br>
+struct Functions {
+    init_name: Ident,
+    update_name: Ident,
+    state_type: Option<Ident>,
+    auto_save: bool
+}
+
+impl Parse for Functions {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let init_name: Ident = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let update_name: Ident = input.parse()?;
+        let (state_type, auto_save) = if input.parse::<Token![,]>().is_ok() {
+            let state_type: Ident = input.parse()?;
+            if input.parse::<Token![,]>().is_ok() {
+                let val:LitBool = input.parse()?;
+                (Some(state_type),val.value)
+            } else {
+                (Some(state_type),true)
+            }
+        } else {
+            (None,false)
+        };
+
+        Ok(Self {
+            init_name,
+            update_name,
+            state_type,
+            auto_save
+        })
+    }
+}
+
+/// Generates the init and update functions REQUIRED for your plugin<br>
+/// Pass in the name of the init_fn, update_in and optional state_type T and auto_save bool<br>
+/// <br>
+/// init_fn<br>
+/// This function needs to take a wrapper::PluginHandle<T> as parameter, and return a Result<T,ToString><br>
+/// <br>
+/// update_fn<br>
+/// This function needs to take a wrapper::PluginHandle<T> and wrapper::Message as parameter, and
+/// return Result<(),ToString><br>
+/// <br>
+/// If you don't want to use state, then set T to (), and not pass in a state_type.<br>
+/// If you want to define a state, but don't want to auto save it after init then you can pass in
+/// auto_save bool as false (Ideal for when you want to spin up your own thread). Then you don't
+/// need to return Result<T,ToString> for init_fn, a Result<(),ToString> is enough.<br>
 /// <br>
 /// Return Ok() if everything worked, use Err if not and to log the message.<br>
 /// Also, you don't have to use String, any type that implements ToString works (as long as you
@@ -13,27 +57,76 @@ use syn::{parse::{Parse, ParseStream}, parse_macro_input, Ident, LitInt, LitStr,
 /// If you return Err or panic a none 0 code is returned to DataRace, which will halt the execution
 /// of this plugin.
 #[proc_macro]
-pub fn init_fn(input: TokenStream) -> TokenStream {
-    let func_name = parse_macro_input!(input as Ident);
+pub fn generate_funcs(input: TokenStream) -> TokenStream {
+    let Functions {
+        init_name,
+        update_name,
+        state_type,
+        auto_save,
+    } = parse_macro_input!(input as Functions);
     
+    let handle_gen = if let Some(state) = state_type {
+        quote!{ unsafe { datarace_plugin_api_wrapper::wrappers::PluginHandle::<#state>::new(handle) } }
+    } else {
+        quote!{ unsafe { datarace_plugin_api_wrapper::wrappers::PluginHandle::<()>::new(handle) } }
+    };
+
+    let init_handle = if auto_save {
+        quote! {
+            match #init_name(han) {
+                Ok(value) => {
+                    let han = #handle_gen;
+                    unsafe { han.store_state_now(value) }
+                    Ok(())
+                },
+                Err(e) => Err(e)
+            }
+        }
+    } else {
+        quote!{ #init_name(han) }
+    };
+
     quote! {
 #[no_mangle]
 pub extern "C" fn init(handle: *mut datarace_plugin_api_wrapper::reexport::PluginHandle) -> std::os::raw::c_int {
-    let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::new(handle);
+    let han = #handle_gen;
     let res = std::panic::catch_unwind(|| {
-        #func_name(han)
+        #init_handle
     });
 
     match res {
         Ok(Ok(_)) => 0,
         Ok(Err(text)) => {
-            let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::new(handle);
+            let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::<std::os::raw::c_void>::new_raw(handle);
             han.log_error(text.to_string());
             1
         },
         Err(_) => {
-            let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::new(handle);
+            let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::<std::os::raw::c_void>::new_raw(handle);
             han.log_error("Plugin Init Paniced!");
+            10
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn update(handle: *mut datarace_plugin_api_wrapper::reexport::PluginHandle, msg: datarace_plugin_api_wrapper::reexport::Message) -> std::os::raw::c_int {
+    let han = #handle_gen;
+    let message = datarace_plugin_api_wrapper::wrappers::Message::from(msg);
+    let res = std::panic::catch_unwind(|| {
+        #update_name(han, message)
+    });
+
+    match res {
+        Ok(Ok(_)) => 0,
+        Ok(Err(text)) => {
+            let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::<std::os::raw::c_void>::new_raw(handle);
+            han.log_error(text.to_string());
+            1
+        },
+        Err(_) => {
+            let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::<std::os::raw::c_void>::new_raw(handle);
+            han.log_error("Plugin Update Paniced!");
             10
         }
     }
@@ -132,45 +225,6 @@ pub extern "C" fn free_string(ptr: *mut std::os::raw::c_char) {
     }.into_token_stream().into() 
 }
 
-/// Generates the update function REQUIRED for your plugin <br>
-/// Pass in the name of your function that will handle the update messages<br>
-/// This function needs to take a wrapper::PluginHandle and wrapper::Message as parameter, and return a Result<(),String><br>
-/// <br>
-/// Return Ok() if everything worked, use Err if not and to log the message.<br>
-/// Also, you don't have to use String, any type that implements ToString works (as long as you
-/// didn't Box it).<br>
-/// <br>
-/// If you return Err or panic a none 0 code is returned to DataRace, which will halt the execution
-/// of this plugin.
-#[proc_macro]
-pub fn update_fn(input: TokenStream) -> TokenStream {
-    let func_name = parse_macro_input!(input as Ident);
-    
-    quote! {
-#[no_mangle]
-pub extern "C" fn update(handle: *mut datarace_plugin_api_wrapper::reexport::PluginHandle, msg: datarace_plugin_api_wrapper::reexport::Message) -> std::os::raw::c_int {
-    let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::new(handle);
-    let message = datarace_plugin_api_wrapper::wrappers::Message::from(msg);
-    let res = std::panic::catch_unwind(|| {
-        #func_name(han, message)
-    });
-
-    match res {
-        Ok(Ok(_)) => 0,
-        Ok(Err(text)) => {
-            let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::new(handle);
-            han.log_error(text.to_string());
-            1
-        },
-        Err(_) => {
-            let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::new(handle);
-            han.log_error("Plugin Update Paniced!");
-            10
-        }
-    }
-}
-    }.into_token_stream().into()
-}
 
 /// Generates a property handle at compiletime
 /// It will insert a PropertyHandle in this place

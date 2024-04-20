@@ -13,6 +13,7 @@ pub struct PluginHandle {
     pub(crate) properties: HashMap<u64, utils::PropertyContainer>,
     pub(crate) sender: kanal::Sender<crate::pluginloader::LoaderMessage>,
     pub(crate) version: [u16;3],
+    pub(crate) state_ptr: *mut libc::c_void,
     free_string: extern "C" fn(ptr: *mut libc::c_char),
     lock: std::sync::atomic::AtomicU32
 }
@@ -34,7 +35,8 @@ impl PluginHandle {
             free_string,
             sender,
             version,
-            lock: std::sync::atomic::AtomicU32::new(0)
+            lock: std::sync::atomic::AtomicU32::new(0),
+            state_ptr: std::ptr::null_mut()
         }
     }
 

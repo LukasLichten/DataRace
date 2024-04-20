@@ -1,4 +1,4 @@
-use libc::c_char;
+use libc::{c_char, c_void};
 use log::error;
 
 use crate::{pluginloader::LoaderMessage, utils, DataStoreReturnCode, Message, PluginDescription, PluginHandle, Property, PropertyHandle, ReturnValue, API_VERSION};
@@ -215,7 +215,7 @@ pub extern "C" fn change_property_type(handle: *mut PluginHandle, prop_handle: P
 pub extern "C" fn subscribe_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
-    log::debug!("Hit subscribe");
+    // log::debug!("Hit subscribe");
     
     if let Err(e) = han.sender.send(LoaderMessage::Subscribe(prop_handle)) {
         error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
@@ -276,6 +276,47 @@ fn log_plugin_msg(handle: *mut PluginHandle, message: *mut c_char, log_level: lo
         .level(log_level)
         .args(format_args!("[{}] {msg}", han.name))
         .build());
+}
+
+/// This returns the ptr to a state you stored earlier,
+/// allowing you to have shared state in your plugin
+#[no_mangle]
+pub extern "C" fn get_state(handle: *mut PluginHandle) -> *mut c_void {
+    let han = get_handle!(handle, std::ptr::null_mut());
+
+    han.state_ptr
+}
+
+/// This writes the state ptr immediatly
+///
+/// will aquire a lock while writing in the ptr, but reads will not be blocked and will cause
+/// undefined behavior. In general, you should probably write this only once during init, after
+/// that just read the value and rely on intirior mutability.
+///
+/// It is also your responsibility to deallocate the memory.
+/// Currently this is difficult, while Shutdown is signaled, and you could deallocate it then
+/// (but also, as the programm is shutting down, we could leak it briefly before the os cleans up,
+/// but this behavior may change in future releases to allow partial shutdown/restarts),
+/// if your plugin suffered an error (especially one that crashed the loader task too)
+/// we have no way to dispose it
+#[no_mangle]
+pub extern "C" fn save_state_now(handle: *mut PluginHandle, state: *mut c_void) {
+    let han = get_handle!(handle);
+
+    han.lock();
+    {
+        let han = if let Some(han) = unsafe {
+            handle.as_mut()
+        } {
+            han
+        } else {
+            han.unlock();
+            return;
+        };
+
+        han.state_ptr = state;
+    }
+    han.unlock();
 }
 
 /// Puts a message back into the Queue

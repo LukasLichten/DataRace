@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, marker::PhantomData, os::raw::c_void};
 use crate::get_string;
 use datarace_plugin_api_sys as sys;
 use std::ffi::CString;
@@ -7,17 +7,79 @@ use std::ffi::CString;
 /// The handle for this plugin passed through into this plugin from the API
 /// Used for call to the Plugin API
 #[derive(Debug, Clone)]
-pub struct PluginHandle {
-    ptr: *mut crate::reexport::PluginHandle
+pub struct PluginHandle<T> {
+    ptr: *mut crate::reexport::PluginHandle,
+    _p: PhantomData<T>
 }
 
-impl PluginHandle {
-    pub fn new(ptr: *mut crate::reexport::PluginHandle) -> PluginHandle {
-        PluginHandle { ptr }
+impl<T> PluginHandle<T> {
+    pub unsafe fn new(ptr: *mut crate::reexport::PluginHandle) -> PluginHandle<T> {
+        PluginHandle::<T> { ptr, _p: PhantomData::<T>::default() }
     }
 
+    #[inline]
     pub(crate) fn get_ptr(&self) -> *mut crate::reexport::PluginHandle {
         self.ptr
+    }
+
+    pub unsafe fn get_state_ptr(&self) -> *mut c_void {
+        sys::get_state(self.ptr)
+    }
+
+    pub unsafe fn store_state_ptr_now(&self, ptr: *mut c_void) {
+        sys::save_state_now(self.ptr, ptr);
+    }
+}
+
+impl PluginHandle<c_void> {
+    pub fn new_raw(ptr: *mut crate::reexport::PluginHandle) -> PluginHandle<c_void> {
+        PluginHandle::<c_void> { ptr, _p: PhantomData::<c_void>::default() }
+    }
+}
+
+impl<T> PluginHandle<T> where T:Sized {
+    pub fn get_state(&self) -> Option<&T> {
+        unsafe {
+            let ptr = sys::get_state(self.ptr);
+            ptr.cast::<T>().as_ref()
+        } 
+    }
+
+    /// This stores the state (specifically the pointer for the state) into the plugin handle
+    ///
+    /// This is marked as unsafe as there can be race conditions with get_state, so this is best
+    /// used during init, prior to spinning up any other task.
+    /// 
+    /// The previous state is NOT deallocated, so you either call drop_state_now first,
+    /// or use get_state_ptr to retrieve the pointer (which you then deallocate after calling this
+    /// function. Keep in mind, that deallocating is even more unsafe as just using this function, read
+    /// more in drop_state_now).
+    /// Obviously you don't need to deallocate anything if you had never assigned a state before
+    pub unsafe fn store_state_now(&self, value: T) {
+        let ptr = Box::into_raw(Box::new(value));
+        
+        let ptr = ptr.cast::<c_void>();
+
+        sys::save_state_now(self.ptr, ptr);
+    }
+
+    /// This deallocates the state object stored at the pointer, setting the state pointer back to
+    /// a null pointer.
+    ///
+    /// This function is incredibly unsafe, as (in a multi threaded enviorment, or having handed off
+    /// closures) someone could still be holding a Reference to this state optained through get_state,
+    /// which would then point into freed memory.
+    /// So this function should only be called during shutdown, after you shutdown anything that could access it
+    ///
+    /// This will respect the case of the pointer being a null pointer, and not deallocate anything
+    pub unsafe fn drop_state_now(&self) {
+        let ptr = sys::get_state(self.ptr).cast::<T>();
+        
+        if !ptr.is_null() {
+            sys::save_state_now(self.ptr, std::ptr::null_mut());
+            
+            drop(Box::from_raw(ptr));
+        }
     }
 }
 

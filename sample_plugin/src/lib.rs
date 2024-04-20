@@ -6,14 +6,26 @@ datarace_plugin_api_wrapper::macros::free_string_fn!();
 // Generates the required plugin description
 datarace_plugin_api_wrapper::macros::plugin_descriptor_fn!("sample_plugin", 0, 0, 1);
 
-// This generates the extern func, while also wrapping the types
-datarace_plugin_api_wrapper::macros::init_fn!(handle_init);
+// This generates the extern funcs, while also wrapping the types
+// you pass in the two function names that handle init and update
+// Optionally you pass in the statetype as the third value, which you will have to return out of
+// the init handle function (which will then be stored into the state)
+// But if you don't want the state automatically saved, you can save parse a boolean in as a forth
+// value and turn it off (ideal if you want to spin up a worker thread in the init function)
+datarace_plugin_api_wrapper::macros::generate_funcs!(handle_init, handle_update, State);
 
 const PROP_HANDLE: PropertyHandle = datarace_plugin_api_wrapper::macros::generate_property_handle!("sample_plugin.Test");
 
-// this function handles the init
-// it takes a PluginHandle
-fn handle_init(handle: PluginHandle) -> Result<(),String> {
+// Allows you to store data between invocations
+struct State {
+    lock_count: std::sync::atomic::AtomicU64,
+}
+
+// This function handles the init
+// it takes a PluginHandle<T> and returns Result<T,ToString>
+// If you didn't pass in a State into the macro, then set T to ()
+// If you have auto save turned off you can return Result<(),ToString>
+fn handle_init(handle: PluginHandle<State>) -> Result<State,String> {
     let prop_name = "sample_plugin.Test";
     let runtime_prop_handle = datarace_plugin_api_wrapper::api::generate_property_handle(prop_name).unwrap();
     let compiled_prop_handle = datarace_plugin_api_wrapper::macros::generate_property_handle!(" sample_plugin.test");
@@ -30,11 +42,9 @@ fn handle_init(handle: PluginHandle) -> Result<(),String> {
         e => handle.log_error(e)
     };
 
-
     handle.subscribe_property(PROP_HANDLE);
     //
     // api::update_property(&handle, &PROP_HANDLE, Property::Int(1));
-
 
     // let v = api::get_property_value(&handle, &prop_handle).unwrap();
     // api::log_info(&handle, format!("{}", match v { Property::Int(i) => i.to_string(), _ => "NAN".to_string() }));
@@ -46,13 +56,13 @@ fn handle_init(handle: PluginHandle) -> Result<(),String> {
     //     api::log_info(&handle, "Property succesfully deleted");
     // }
 
-    Ok(())
+    Ok(State { lock_count: std::sync::atomic::AtomicU64::default() })
 }
 
-datarace_plugin_api_wrapper::macros::update_fn!(handle_update);
-
 // this function deal with messages during runtime
-fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
+// it takes a PluginHandle<T> and Message, and returns Result<(),ToString>
+// If you didn't pass in a State into the macro, then set T to ()
+fn handle_update(handle: PluginHandle<State>, msg: Message) -> Result<(), String> {
     match msg {
         Message::Lock => {
             // This message comes in to lock the plugin handle to perform some write (like creating
@@ -70,7 +80,9 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
             // computation
             
             // Again, sample does not have a seperate thread currently, so we log
-            handle.log_info("Received Unlock");
+    
+            let state = handle.get_state().ok_or("No state :(".to_string())?;
+            handle.log_info(format!("Received Unlock #{}", state.lock_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
 
             let start = std::time::Instant::now();
 
@@ -130,6 +142,7 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
             // won't be send
 
             handle.log_info("See You, Space Cowboy...");
+            unsafe { handle.drop_state_now(); }
         },
         _ => ()
     }

@@ -17,6 +17,9 @@ pub use bindings::{create_property, update_property, get_property_value, generat
 //Additional functions
 pub use bindings::deallocate_string;
 
+//State functions
+pub use bindings::{save_state_now, get_state};
+
 //Data
 // Enums
 pub use bindings::{DataStoreReturnCode, DataStoreReturnCode_Ok, DataStoreReturnCode_NotAuthenticated, DataStoreReturnCode_AlreadyExists, DataStoreReturnCode_DoesNotExist, DataStoreReturnCode_TypeMissmatch, DataStoreReturnCode_NotImplemented, DataStoreReturnCode_ParameterCorrupted, DataStoreReturnCode_DataCorrupted};
