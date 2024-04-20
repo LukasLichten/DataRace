@@ -99,7 +99,12 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
         }
         drop(w_store);
 
-        debug!("Plugin {} with id {} loaded", get_plugin_name(&ptr_h), id);
+        if let Some(han) = unsafe {
+            ptr_h.ptr.as_ref()    
+        } {
+            info!("Plugin {} (version {}.{}.{}) loaded", han.name, han.version[0], han.version[1], han.version[2]);
+            debug!("Plugin {} has id {}", han.name, id);
+        }
 
         // Initializing
         if wrapper.init(ptr_h.ptr) != 0 {

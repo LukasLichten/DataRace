@@ -48,13 +48,13 @@ pub extern "C" fn run() {
 }
 
 async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
-    info!("Launching DataRace...");
+    info!("Launching DataRace version {}.{}.{} (apiversion: {})...", built_info::PKG_VERSION_MAJOR, built_info::PKG_VERSION_MINOR, built_info::PKG_VERSION_PATCH, API_VERSION);
     let datastore: &'static tokio::sync::RwLock<datastore::DataStore>  = Box::leak(Box::new(datastore::DataStore::new()));
 
     let shutdown = Arc::new(AtomicBool::new(false));
     // let sh_clone = shutdown.clone();
     ctrlc::set_handler(move || {
-        futures::executor::block_on(async {
+        futures_lite::future::block_on(async {
             if shutdown.load(std::sync::atomic::Ordering::Acquire) {
                 // we are already in a shutdown
                 error!("Stop requested a second time, so we are now hard exiting");

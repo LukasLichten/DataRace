@@ -11,18 +11,20 @@ or talk to the Socket.io api instead.
 **Unusable**, basically nothing is implemented yet:  
 - Linux and Windows Compat
 - Loading of Plugins out of the plugins folder
-  
-*TODO*:  
 - Implement basic API handles for data and messaging
 - Flesh out wrapper and sample plugin
 
 *Far future*:
+- cmd/env args, config files
 - Implement socket.io server
 - Build native game reader
 - Build dashboard rendering and editor
 - Implementing the option to export telemetry logs
 - World domination
 - Stabilize API lol
+
+Some small features are up for consideration, ready to implement,
+but to stop myself from getting bucked by scope creep more then necessary I have instead put them [here](docs/MayImplement.md)
 
 ## Building
 ### Build Requirements
