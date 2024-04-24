@@ -75,13 +75,28 @@ async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
     // web::run_webserver(datastore, sh_clone).await?;
     
 
-    // Stops the Runtime from closing when plugins are still running
-    while let Some(res) = plugin_set.join_next().await {
-        match res {
-            Ok(_) => debug!("Some plugin finished"),
-            Err(e) => error!("Plugin Runner Task (and it's contained Plugin) Crashed: {}", e)
+    // Handles closing the plugin tasks
+    let handle = tokio::spawn(async move {
+        while let Some(res) = plugin_set.join_next().await {
+            match res {
+                Ok(fin) => if let Err(name) = fin {
+                    error!("Plugin {} has crashed!", name);
+                },
+                Err(e) => {
+                    // Here would be to insert tokio::task::Id to determine the failed task and
+                    // start shutting down the plugin
+                    // But as task::Id is in tokio_unstable it causes recompile of tokio every
+                    // single build, with the current development process unsutainable
+                    error!("Plugin Runner Task (and it's contained Plugin) Crashed: {}", e)
+                }
+            }
         }
-    }
+
+        debug!("All Plugins have shut down");
+    });
+
+    // Stops the Runtime from closing when plugins are still running
+    let _ = handle.await;
 
     Ok(())
 }

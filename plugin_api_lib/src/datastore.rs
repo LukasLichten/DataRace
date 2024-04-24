@@ -9,6 +9,7 @@ use crate::{pluginloader::LoaderMessage, DataStoreReturnCode, PluginHandle};
 pub(crate) struct DataStore {
     // Definitly some optimizations can be made here
     plugins: HashMap<u64, Plugin>,
+    // task_map: HashMap<tokio::task::Id, (u64, String)>,
     shutdown: bool
 }
 
@@ -16,6 +17,7 @@ impl DataStore {
     pub fn new() -> RwLock<DataStore> {
         RwLock::new(DataStore {
             plugins: HashMap::default(),
+            // task_map: HashMap::default(),
             shutdown: false
         })
     }
@@ -34,7 +36,7 @@ impl DataStore {
         Some(())
     }
 
-    pub(crate) async fn delete_plugin(&mut self, id: u64) -> DataStoreReturnCode {
+    pub(crate) async fn delete_plugin(&mut self, id: u64, safe_shutdown: bool) -> DataStoreReturnCode {
                 
         if self.plugins.contains_key(&id) {
             let handle = self.plugins[&id].handle;
@@ -42,9 +44,11 @@ impl DataStore {
             self.plugins.remove(&id);
 
 
-            // Deallocating the pluginhandle
-            unsafe {
-                drop(Box::from_raw(handle));
+            // Deallocating the pluginhandle, but only when we are sure it all correctly shut down
+            if safe_shutdown {
+                unsafe {
+                    drop(Box::from_raw(handle));
+                }
             }
 
 

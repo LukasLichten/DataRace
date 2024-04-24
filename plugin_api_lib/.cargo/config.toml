@@ -1,0 +1,6 @@
+[build]
+# rustflags = ["--cfg", "tokio_unstable"]
+# This would allow us to add task id, but tokio_unstable causes tokio (and it's ~50 dependencies) to rebuild EVERY SINGLE BUILD.
+# On my laptop this is just too much.
+# This feature has been in Tokio Unstable since November 2022/1.22 (or parts of it),
+# so maybe we get this someday... but then again still faster development timeline then me
