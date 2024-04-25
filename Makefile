@@ -1,7 +1,7 @@
 .phony: all build plugin-api api-debug test-plugin clean test final help 
 
-all: build test-plugin
-	# Test Plugin temporary build also during make
+all: plugin-api
+	@# only building the plugin-api, compile the plugin seperatly
 	LD_LIBRARY_PATH=./target/release/ ./target/release/datarace
 
 build: plugin-api
@@ -34,7 +34,7 @@ final: clean plugin-api
 
 help:
 	@echo "Makefile for build DataRace"
-	@echo "make:             Runs 'make build' and then runs it"
+	@echo "make:             Runs 'make plugin-api' and then runs (use build prior to this)"
 	@echo "make build:       Builds Plugin-API and Executable (release mode)"
 	@echo "make plugin-api:  Only builds the plugin-api (release mode)"
 	@echo "make api-debug:   Builds Plugin-API in debug mode (to address issues with LSPs)"

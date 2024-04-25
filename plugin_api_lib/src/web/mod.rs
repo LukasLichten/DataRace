@@ -1,6 +1,6 @@
-use std::{str::FromStr, sync::{atomic::AtomicBool, Arc}};
+use std::sync::{atomic::AtomicBool, Arc};
 
-use axum::{response::Html, routing::get};
+use axum::{response::IntoResponse, routing::get};
 use log::{debug, info};
 use tokio::net::TcpListener;
 
@@ -8,14 +8,15 @@ use utils::DataStoreLocked;
 
 mod utils;
 mod socket;
+mod pages;
 
 pub(crate) async fn run_webserver(datastore: DataStoreLocked, shutdown: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
     debug!("Setting up webserver...");
     let layer = socket::create_socketio_layer(datastore).await;
 
     let app = axum::Router::new()
-        .route("/", get(|| async { serve_page("index.html").await }))
-        .route("/style.css", get(|| async { serve_page("style.css").await }))
+        .route("/", get(pages::index))
+        .route("/style.css", get(serve_css))
         .with_state(datastore)
         .layer(layer);
     let listener = TcpListener::bind("0.0.0.0:3000").await?;
@@ -28,11 +29,16 @@ pub(crate) async fn run_webserver(datastore: DataStoreLocked, shutdown: Arc<Atom
     Ok(())
 }
 
-async fn serve_page(asset: &str) -> Html<String> {
-    let mut path = std::path::PathBuf::from_str("./plugin_api_lib/assets").unwrap();
-    path.push(asset);
+async fn serve_css() -> axum::response::Response {
+    let mut res = serve_page("style.css").await.into_response();
+    let header = res.headers_mut();
+    header.insert(axum::http::header::CONTENT_TYPE, "text/css".parse().expect("string is string"));
 
-    let val = std::fs::read_to_string(path.as_path()).unwrap();
+    res
+}
 
-    Html(val)
+async fn serve_page(asset: &str) -> maud::Markup {
+    maud::html! {
+        (pages::serve_asset(asset).await)
+    }
 }

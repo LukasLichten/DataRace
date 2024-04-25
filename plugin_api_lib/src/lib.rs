@@ -11,7 +11,6 @@ mod built_info {
 
 mod datastore;
 
-#[allow(dead_code, unused_variables, unused_imports)]
 mod web;
 
 mod pluginloader;
@@ -52,7 +51,7 @@ async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
     let datastore: &'static tokio::sync::RwLock<datastore::DataStore>  = Box::leak(Box::new(datastore::DataStore::new()));
 
     let shutdown = Arc::new(AtomicBool::new(false));
-    // let sh_clone = shutdown.clone();
+    let sh_clone = shutdown.clone();
     ctrlc::set_handler(move || {
         futures_lite::future::block_on(async {
             if shutdown.load(std::sync::atomic::Ordering::Acquire) {
@@ -72,7 +71,7 @@ async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
 
     let mut plugin_set = pluginloader::load_all_plugins(datastore).await?;
 
-    // web::run_webserver(datastore, sh_clone).await?;
+    web::run_webserver(datastore, sh_clone).await?;
     
 
     // Handles closing the plugin tasks
