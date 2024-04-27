@@ -4,5 +4,7 @@ output.txt
 *.dll
 *.so
 bin/
-plugin/
 libdatarace_plugin_api.h
+
+dashboards/
+plugin/

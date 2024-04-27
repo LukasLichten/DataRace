@@ -11,7 +11,10 @@ use crate::{api_types, datastore::DataStore, utils, DataStoreReturnCode, Message
 
 
 pub(crate) async fn load_all_plugins(datastore: &'static tokio::sync::RwLock<DataStore>) -> Result<JoinSet<Result<(),String>>,Box<dyn std::error::Error>> {
-    let plugin_folder = PathBuf::from("./plugins/");
+    let plugin_folder = {
+        let ds_r = datastore.read().await;
+        ds_r.get_config().get_plugin_folder()
+    };
 
     if !plugin_folder.is_dir() {
         info!("Plugins folder did not exist, creating...");

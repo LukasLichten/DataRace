@@ -133,6 +133,49 @@ nav {
   color: var(--theme-main-color);
 }
 
+.dashboard-list {
+  list-style-type: none;
+  padding-left: 0.0rem;
+}
+
+.dashboard-entry {
+  margin-top: 0.25rem;
+  margin-left: 0.75rem;
+  border-style: solid;
+  border-color: var(--theme-main-color);
+  border-width: 0.25rem;
+  padding: 1.0rem;
+
+  color: var(--theme-text-main);
+}
+
+.dashboard-entry > h3 {
+  margin-top: 0.0rem;
+}
+
+.dashboard-entry > div {
+  display: flex;
+  justify-content: right;
+  font-size: 1.2rem;
+}
+
+.button {
+  background: var(--theme-main-color);
+  color: var(--theme-text-alt);
+  text-align: center;
+  text-decoration: none;
+  font-style: normal;
+  
+  padding: 0.2rem;
+  margin-left: 0.25rem;
+}
+
+.button:hover {
+  text-decoration: underline;
+  /* font-style: italic; */
+  background: var(--theme-selection);
+}
+
 @media (max-width: 1100px)
 {
   html {

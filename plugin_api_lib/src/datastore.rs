@@ -1,4 +1,7 @@
+use std::{path::PathBuf, str::FromStr};
+
 use log::info;
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use kanal::{AsyncSender, Sender};
 use hashbrown::HashMap;
@@ -9,6 +12,7 @@ use crate::{pluginloader::LoaderMessage, DataStoreReturnCode, PluginHandle};
 pub(crate) struct DataStore {
     // Definitly some optimizations can be made here
     plugins: HashMap<u64, Plugin>,
+    config: Config,
     // task_map: HashMap<tokio::task::Id, (u64, String)>,
     shutdown: bool
 }
@@ -17,6 +21,7 @@ impl DataStore {
     pub fn new() -> RwLock<DataStore> {
         RwLock::new(DataStore {
             plugins: HashMap::default(),
+            config: Config::default(),
             // task_map: HashMap::default(),
             shutdown: false
         })
@@ -68,6 +73,10 @@ impl DataStore {
 
     } 
 
+    pub(crate) fn count_plugins(&self) -> usize {
+        self.plugins.iter().count()
+    }
+
     pub(crate) async fn start_shutdown(&mut self) {
         info!("Beginning Shutdown... ");
         self.shutdown = true;
@@ -88,6 +97,10 @@ impl DataStore {
             false
         }
     }
+
+    pub(crate) fn get_config<'a>(&'a self) -> &'a Config {
+        &self.config
+    }
 }
 
 pub(crate) struct Plugin {
@@ -98,3 +111,37 @@ pub(crate) struct Plugin {
 unsafe impl Send for Plugin {}
 unsafe impl Sync for Plugin {}
 
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct Config {
+    plugin_location: PathBuf,
+    dashboards_location: PathBuf
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        let base = PathBuf::from_str(".").expect("Current folder dereference should always work");
+        Config {
+            plugin_location: {
+                let mut plugin = base.clone();
+                plugin.push("plugins");
+                plugin
+            },
+            dashboards_location: {
+                let mut dash = base.clone();
+                dash.push("dashboards");
+                dash
+            },
+        }
+    }
+}
+
+impl Config {
+    pub(crate) fn get_plugin_folder(&self) -> PathBuf {
+        self.plugin_location.clone()
+    }
+
+
+    pub(crate) fn get_dashboards_folder(&self) -> PathBuf {
+        self.dashboards_location.clone()
+    }
+}

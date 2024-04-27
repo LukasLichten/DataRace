@@ -4,7 +4,7 @@ use datarace_plugin_api_wrapper::wrappers::{DataStoreReturnCode, Message, Plugin
 datarace_plugin_api_wrapper::macros::free_string_fn!();
 
 // Generates the required plugin description
-datarace_plugin_api_wrapper::macros::plugin_descriptor_fn!("sample_plugin", 0, 0, 1);
+datarace_plugin_api_wrapper::macros::plugin_descriptor_fn!("sample_plugin", 0, 1, 0);
 
 // This generates the extern funcs, while also wrapping the types
 // you pass in the two function names that handle init and update
