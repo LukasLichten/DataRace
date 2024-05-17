@@ -198,8 +198,10 @@ pub(super) async fn edit_dashboard(Path(path): Path<String>, State(datastore): S
     let mut folder = get_dashboard_folder(datastore).await?;
 
     let test_dash = dashboard::Dashboard {
+        size_x: 1000,
+        size_y: 750,
         name: path.clone(),
-        elements: vec![dashboard::DashElement { x: 150, y: 200, size_x: 500, size_y: 500, element: dashboard::DashElementType::Square }]
+        elements: vec![dashboard::DashElement { name: "tester_1".to_string(), x: 150, y: 200, size_x: 500, size_y: 500, element: dashboard::DashElementType::Square("red".to_string()) }]
     };
 
     folder.push(path.as_str());
