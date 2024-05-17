@@ -6,12 +6,15 @@ use tokio::sync::RwLock;
 use kanal::{AsyncSender, Sender};
 use hashbrown::HashMap;
 
-use crate::{pluginloader::LoaderMessage, DataStoreReturnCode, PluginHandle};
+use crate::{pluginloader::LoaderMessage, utils::ValueContainer, DataStoreReturnCode, PluginHandle, PropertyHandle};
 
 /// This is our centralized State
 pub(crate) struct DataStore {
-    // Definitly some optimizations can be made here
     plugins: HashMap<u64, Plugin>,
+    // Serves for access by the websocket
+    properties: HashMap<PropertyHandle, ValueContainer>,
+    // As the hash is not reversible, but for certain opertations we need the name...
+    prop_names: HashMap<PropertyHandle, String>,
     config: Config,
     // task_map: HashMap<tokio::task::Id, (u64, String)>,
     shutdown: bool
@@ -21,13 +24,14 @@ impl DataStore {
     pub fn new() -> RwLock<DataStore> {
         RwLock::new(DataStore {
             plugins: HashMap::default(),
+            properties: HashMap::default(),
+            prop_names: HashMap::default(),
             config: Config::default(),
             // task_map: HashMap::default(),
             shutdown: false
         })
     }
 
-    /// Reuses an existing channel
     pub(crate) fn register_plugin(&mut self, id: u64, sx: Sender<LoaderMessage>, handle: *mut PluginHandle) -> Option<()> {
         if self.shutdown {
             return None;
@@ -42,7 +46,6 @@ impl DataStore {
     }
 
     pub(crate) async fn delete_plugin(&mut self, id: u64, safe_shutdown: bool) -> DataStoreReturnCode {
-                
         if self.plugins.contains_key(&id) {
             let handle = self.plugins[&id].handle;
             
@@ -61,6 +64,10 @@ impl DataStore {
                 // short cut
                 return DataStoreReturnCode::Ok;
             }
+
+            // Deletes the properties of this plugin from the datastore,
+            // so they won't be available to the web endpoint anymore
+            self.properties.retain(|&k, _| k.plugin != id );
 
             // TODO send a message to all other plugins so they can remove leftover
             // properties/subscriptions from
@@ -98,8 +105,44 @@ impl DataStore {
         }
     }
 
+    /// This creates/replaces a properties value container
+    /// There is no check if this plugin is allowed to edit this property, so use carefully
+    pub(crate) fn set_property(&mut self, handle: PropertyHandle, val: ValueContainer) {
+        self.properties.insert(handle, val);
+    }
+
+    /// Serves for displaying the property name
+    pub(crate) fn register_property_name(&mut self, handle: PropertyHandle, name: String) {
+        self.prop_names.insert(handle, name);
+    }
+
+    /// Retrieves the property name
+    pub(crate) fn read_property_name(&self, handle: &PropertyHandle) -> Option<String> {
+        Some(self.prop_names.get(handle)?.clone())
+    }
+
+    /// Retrieves a reference to the valuecontainer (if present)
+    /// There are again no checks, you should only read the values contained
+    pub(crate) fn get_property_container<'a>(&'a self, handle: &PropertyHandle) -> Option<&'a ValueContainer> {
+        self.properties.get(handle)
+    }
+
+    /// Deletes the Property (only if it exists) with no further checks
+    pub(crate) fn delete_property(&mut self, handle: &PropertyHandle) {
+        self.properties.remove(handle);
+    }
+
+    pub(crate) fn count_properties(&self) -> usize {
+        self.properties.iter().count()
+    }
+
+
     pub(crate) fn get_config<'a>(&'a self) -> &'a Config {
         &self.config
+    }
+
+    pub(crate) fn iter_properties<'a>(&'a self) -> hashbrown::hash_map::Keys<'a, PropertyHandle, ValueContainer> {
+        self.properties.keys()
     }
 }
 

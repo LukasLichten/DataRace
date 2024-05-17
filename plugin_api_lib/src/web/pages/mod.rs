@@ -5,6 +5,8 @@ use log::{error, info};
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 use tokio::fs::{self, DirEntry};
 
+use crate::utils::Value;
+
 use super::utils::DataStoreLocked;
 
 mod dashboard;
@@ -27,7 +29,7 @@ fn header(name: &str) -> Markup {
 } 
 
 async fn generate_page(content: Markup, item: usize) -> Markup {
-    let pages = [("./", "Home"),("./dashboard","Dashboards"),("./setting","Settings")];
+    let pages = [("./", "Home"),("./dashboard","Dashboards"),("./properties", "Properties"),("./setting","Settings")];
 
     html! {
         (header(pages[item].1))
@@ -70,8 +72,9 @@ async fn generate_page(content: Markup, item: usize) -> Markup {
 }
 
 pub(super) async fn index(State(datastore): State<DataStoreLocked>) -> Markup {
-    let plugin_count = {
-        datastore.read().await.count_plugins()
+    let (plugin_count,properties_count) = {
+        let ds_r = datastore.read().await;
+        (ds_r.count_plugins(),ds_r.count_properties())
     };
 
     use crate::built_info::*;
@@ -83,6 +86,9 @@ pub(super) async fn index(State(datastore): State<DataStoreLocked>) -> Markup {
             "Apiversion: " (crate::API_VERSION) " - " (CFG_OS)
             br;
             "Plugins Loaded: " (plugin_count)
+            br;
+            br;
+            "Properties: " (properties_count)
             br;
             br;
             a href=(PKG_REPOSITORY) { "GitHub" }
@@ -157,11 +163,51 @@ pub(super) async fn dashboard_list(State(datastore): State<DataStoreLocked>) -> 
     Ok(generate_page(cont, 1).await)
 }
 
+pub(super) async fn properties(State(datastore): State<DataStoreLocked>) -> Markup {
+    let property_list = {
+        let ds_r = datastore.read().await;
+        let mut list = vec![];
+
+        for key in ds_r.iter_properties() {
+            if let (Some(name),Some(cont)) = (ds_r.read_property_name(key),ds_r.get_property_container(key)) {
+                let value = cont.read_web();
+                let ouput = match value {
+                    Value::None => "None".to_string(),
+                    Value::Int(i) => format!("Int: {}", i),
+                    Value::Float(f) => format!("Float: {}", f),
+                    Value::Dur(d) => format!("Duration: {}µs", d),
+                    Value::Bool(b) => format!("Boolean: {}", b),
+                    Value::Str(s) => format!("Str: {}", s)
+                };
+                list.push((name,ouput));
+            }
+        }
+
+        list
+    };
+
+    let cont = html! {
+        h1 { "Properties" }
+
+        ul class="property-list" {
+            @for (name, output) in property_list {
+                li {
+                    div class="property-entry" {
+                        div { (name) }
+                        div { (output) }
+                    }
+                }
+            }
+        }
+    };
+    generate_page(cont, 2).await
+}
+
 pub(super) async fn settings() -> Markup {
     let cont = html! {
         h1 style="font-style: italic;" { "Todo..." }
     };
-    generate_page(cont, 2).await
+    generate_page(cont, 3).await
 }
 
 pub(super) async fn load_dashboard(Path(path): Path<String>, State(datastore): State<DataStoreLocked>) -> Result<Markup, StatusCode> {

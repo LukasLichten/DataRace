@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use kanal::{AsyncReceiver, AsyncSender};
+use serde::{Deserialize, Serialize};
 use socketioxide::socket::Sid;
 use tokio::sync::RwLock;
 use crate::{datastore::DataStore, pluginloader::LoaderMessage};
@@ -62,12 +63,12 @@ impl SocketData {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub(crate) enum Value {
     None,
     Int(i64),
     Float(u64),
     Bool(bool),
-    Str(Arc<String>),
+    Str(String),
     Dur(i64)
 }

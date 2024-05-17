@@ -151,12 +151,41 @@ nav {
 
 .dashboard-entry > h3 {
   margin-top: 0.0rem;
+  margin-bottom: 1.2rem;
 }
 
 .dashboard-entry > div {
   display: flex;
   justify-content: right;
   font-size: 1.2rem;
+}
+
+.property-list {
+  list-style-type: none;
+  padding-left: 0.0rem;
+}
+
+.property-entry {
+  margin-top: 0.15rem;
+  margin-left: 0.5rem;
+  border-style: solid;
+  border-color: var(--theme-main-color);
+  border-width: 0.1rem;
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+  padding-top: 0.0rem;
+
+  display: flex;
+  justify-content: space-between;
+
+  color: var(--theme-text-main);
+}
+
+.property-entry > div {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+
+  font-weight: 600;
 }
 
 .button {

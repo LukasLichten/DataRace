@@ -211,3 +211,18 @@ pub(crate) enum DashElementType {
 }
 
 
+pub(crate) enum Property<T> {
+    Fixed(T),
+    Computed(String)
+}
+
+impl Property<i64> {
+    pub fn get_value(&self) -> i64 {
+        match self {
+            Property::Fixed(res) => res.clone(),
+            Property::Computed(prop) => {
+                0
+            }
+        }
+    }
+}

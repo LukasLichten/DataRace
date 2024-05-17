@@ -1,6 +1,6 @@
 use std::sync::{atomic::AtomicBool, Arc};
 
-use axum::{extract::Request, handler::HandlerWithoutStateExt, http::StatusCode, middleware::{self, Next}, response::IntoResponse, routing::get};
+use axum::{response::IntoResponse, routing::get};
 use log::{debug, info};
 use tokio::net::TcpListener;
 
@@ -19,6 +19,7 @@ pub(crate) async fn run_webserver(datastore: DataStoreLocked, shutdown: Arc<Atom
         .route("/dashboard", get(pages::dashboard_list))
         .route("/dashboard/render/:id", get(pages::load_dashboard))
         .route("/dashboard/edit/:id", get(pages::edit_dashboard))
+        .route("/properties", get(pages::properties))
         .route("/setting", get(pages::settings))
         .route("/style.css", get(serve_css))
         .with_state(datastore)

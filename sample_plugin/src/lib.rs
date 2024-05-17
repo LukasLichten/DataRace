@@ -56,6 +56,8 @@ fn handle_init(handle: PluginHandle<State>) -> Result<State,String> {
     //     api::log_info(&handle, "Property succesfully deleted");
     // }
 
+    let _ = handle.create_property("extra", datarace_plugin_api_wrapper::macros::generate_property_handle!("sample_plugin.extra"), Property::Str("We are number 1".to_string()));
+
     Ok(State { lock_count: std::sync::atomic::AtomicU64::default() })
 }
 

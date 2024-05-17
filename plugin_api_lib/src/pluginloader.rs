@@ -25,10 +25,11 @@ pub(crate) async fn load_all_plugins(datastore: &'static tokio::sync::RwLock<Dat
         }
     }
 
-    #[cfg(target_os = "linux")]
-    let ending = "so";
-    #[cfg(target_os = "windows")]
-    let ending = "dll";
+    let ending = if cfg!(target_os = "linux") {
+        "so"
+    } else {
+        "dll"
+    };
 
     let mut plugin_task_handles = JoinSet::<Result<(), String>>::new();
 
@@ -140,7 +141,7 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
         while let Ok(msg) = async_rec.recv().await {
             // dbg!(&msg);
             if let Err(e) = match msg {
-                LoaderMessage::PropertyCreate(id, container) => create_property(&wrapper, &mut ptr_h, id, container),
+                LoaderMessage::PropertyCreate(id, container) => create_property(&wrapper, &mut ptr_h, id, container).await,
                 LoaderMessage::PropertyTypeChange(id, val_container, allow_modify) => property_type_change(&wrapper, &mut ptr_h, id, val_container, allow_modify).await,
                 LoaderMessage::PropertyDelete(id) => delete_property(&wrapper, &mut ptr_h, id).await,
                 LoaderMessage::Shutdown => shutdown(&wrapper, &mut ptr_h),
@@ -220,7 +221,7 @@ fn get_plugin_name(ptr: &PtrWrapper) -> String {
         return handle.name.clone();
     }
 
-    "unkown/null pointer".to_string()
+    "unknown/null pointer".to_string()
 }
 
 #[derive(WrapperApi)]
@@ -337,7 +338,7 @@ fn send_unlock(wrapper: &PluginWrapper, ptr: &mut PtrWrapper) -> Result<(), MsgP
     Ok(())
 }
 
-fn create_property(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64, container: utils::PropertyContainer) -> Result<(), MsgProcessingError> {
+async fn create_property(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64, container: utils::PropertyContainer) -> Result<(), MsgProcessingError> {
     send_lock(wrapper, ptr)?;
 
     let handle = get_mut_handle(ptr)?;
@@ -347,7 +348,16 @@ fn create_property(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64, conta
         error!("Plugin {} failed to add property {}, id collision {}", handle.name, container.short_name, id);
         return Ok(());
     }
+    let val_container = container.clone_container();
+    let prop_name = format!("{}.{}", handle.name.to_lowercase(), container.short_name.to_lowercase());
     handle.properties.insert(id, container);
+
+    // We write into datastore the property too
+    let prop = PropertyHandle { plugin: handle.id, property: id };
+    let mut ds_w = handle.datastore.write().await;
+    ds_w.set_property(prop.clone(), val_container);
+    ds_w.register_property_name(prop, prop_name);
+    drop(ds_w);
 
     Ok(())
 }
@@ -360,10 +370,16 @@ async fn property_type_change(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id:
     if let Some(cont) = handle.properties.get_mut(&id) {
         cont.swap_container(val_container, allow_modify);
 
-        // Technically we can unlock while sending messages, practically we have to see if there is
-        // any gain
+        // Technically we can unlock while sending messages, practically we have to see if there is any gain
+        let prop = PropertyHandle { plugin: handle.id, property: id };
+        
+        let mut ds_w = handle.datastore.write().await;
+        ds_w.set_property(prop, cont.clone_container());
+        drop(ds_w); // We could rewrite send_message to take the mutexguard... or not
+        // But we have to drop it so the send can achieve lock
+
         send_message_to_all_subs(ptr, id, || {
-            LoaderMessage::UpdateSubscription(PropertyHandle { plugin: handle.id, property: id }, cont.clone_container())
+            LoaderMessage::UpdateSubscription(prop.clone(), cont.clone_container())
         }).await?;
     } else {
         error!("Plugin {} failed to change type of property of id {}, it does not exist", handle.name, id);
@@ -384,10 +400,16 @@ async fn delete_property(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64)
     }
     handle.properties.remove(&id);
 
-    // Technically we can unlock while sending messages, practically we have to see if there is
-    // any gain
+    // Technically we can unlock while sending messages, practically we have to see if there is any gain
+    let prop = PropertyHandle { plugin: handle.id, property: id };
+    let mut ds_w = handle.datastore.write().await;
+    ds_w.delete_property(&prop);
+    drop(ds_w); // We could rewrite send_message to take the mutexguard... or not
+    // we do have to drop it, it could else never secure lock
+    
+
     send_message_to_all_subs(ptr, id, || {
-        LoaderMessage::Unsubscribe(PropertyHandle { plugin: handle.id, property: id })
+        LoaderMessage::Unsubscribe(prop.clone())
     }).await?;
     ptr.subscribers.remove(&id);
 

@@ -1,4 +1,5 @@
-use libc::c_char; 
+use libc::c_char;
+use serde::{Deserialize, Serialize}; 
 use std::{ffi::{CStr, CString}, sync::{atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering}, Arc, RwLock}};
 use kanal::{Sender, Receiver};
 use highway::{HighwayHash, HighwayHasher, Key};
@@ -267,20 +268,31 @@ impl ValueContainer {
         }
     }
 
-    // async fn read_int(&self) -> Value {
-    //     match self {
-    //         ValueContainer::None => Value::None,
-    //         ValueContainer::Int(at) => Value::Int(at.load(READ_ORDERING)),
-    //         ValueContainer::Float(at) => Value::Float(at.load(READ_ORDERING)),
-    //         ValueContainer::Bool(at) => Value::Bool(at.load(READ_ORDERING)),
-    //         ValueContainer::Str(mu) => { 
-    //             let res = mu.lock().await;
-    //             let a = res.clone();
-    //             Value::Str(a)
-    //         },
-    //         ValueContainer::Dur(at) => Value::Dur(at.load(READ_ORDERING)),
-    //     }
-    // }
+    pub(crate) fn read_web(&self) -> Value {
+        match self {
+            ValueContainer::None => Value::None,
+            ValueContainer::Int(at) => Value::Int(at.load(READ_ORDERING)),
+            ValueContainer::Float(at) => Value::Float(at.load(READ_ORDERING)),
+            ValueContainer::Bool(at) => Value::Bool(at.load(READ_ORDERING)),
+            ValueContainer::Str(store) => { 
+                let res = match store.read() {
+                    Ok(res) => {
+                        res.clone()
+                    },
+                    Err(_) => {
+                        // As we don't have write access, and there seems to be poison, we return a
+                        // blank string as fallback, as technically there is no garantee the string
+                        // object stored is in one piece.
+                        // But in reality this case should be pratically impossible, we only write
+                        // a single string while holding this handle, this should never go wrong
+                        "".to_string()
+                    }
+                };
+                Value::Str(res)
+            },
+            ValueContainer::Dur(at) => Value::Dur(at.load(READ_ORDERING)),
+        }
+    }
 
     /// This generates a shallow clone, which still receives all the same value changes
     fn shallow_clone(&self) -> ValueContainer {
@@ -296,6 +308,16 @@ impl ValueContainer {
             ValueContainer::Dur(a) => ValueContainer::Dur(a.clone())
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub(crate) enum Value {
+    None,
+    Int(i64),
+    Float(u64),
+    Bool(bool),
+    Str(String),
+    Dur(i64)
 }
 
 const HASH_KEY_NAME:Key = Key([1,2,3,4]);
