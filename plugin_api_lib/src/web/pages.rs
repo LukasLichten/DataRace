@@ -1,15 +1,13 @@
-use std::{path::PathBuf, str::FromStr};
+use std::str::FromStr;
 
 use axum::{extract::{Path, State}, http::StatusCode};
-use log::{error, info};
+use log::error;
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 use tokio::fs::{self, DirEntry};
 
 use crate::utils::Value;
 
 use super::utils::DataStoreLocked;
-
-mod dashboard;
 
 pub(super) async fn serve_asset(file: &str) -> PreEscaped<String> {
     let mut path = std::path::PathBuf::from_str("./plugin_api_lib/assets").unwrap();
@@ -99,29 +97,6 @@ pub(super) async fn index(State(datastore): State<DataStoreLocked>) -> Markup {
     generate_page(cont, 0).await
 }
 
-async fn get_dashboard_folder(datastore: DataStoreLocked) -> Result<PathBuf, StatusCode> {
-    let ds_r = datastore.read().await;
-    let folder = ds_r.get_config().get_dashboards_folder();
-    // We keep lock over datarace to prevent a race condition with folder creation
-
-    if !folder.exists() {
-        // Creating folder
-        info!("Dashboards folder did not exist, creating...");
-        if let Err(e) = std::fs::create_dir_all(folder.as_path()) {
-            error!("Failed to create Dashboards Folder: {}", e.to_string());
-        }
-    }
-
-    drop(ds_r);
-
-    if folder.is_file() {
-        // We are screwed
-        error!("Unable to open dashboards folder because it is a file!");
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    Ok(folder)
-}
 
 pub(super) async fn dashboard_list(State(datastore): State<DataStoreLocked>) -> Result<Markup, StatusCode> {
     fn parse_dir_entry(item: DirEntry) -> Option<String> {
@@ -131,7 +106,7 @@ pub(super) async fn dashboard_list(State(datastore): State<DataStoreLocked>) -> 
         Some(name.to_string())
     }
 
-    let folder = get_dashboard_folder(datastore).await?;
+    let folder = super::get_dashboard_folder(datastore).await?;
 
     let mut iter = match fs::read_dir(folder.as_path()).await {
         Ok(iter) => iter,
@@ -211,43 +186,17 @@ pub(super) async fn settings() -> Markup {
 }
 
 pub(super) async fn load_dashboard(Path(path): Path<String>, State(datastore): State<DataStoreLocked>) -> Result<Markup, StatusCode> {
-    let mut folder = get_dashboard_folder(datastore).await?;
-
-    folder.push(path.as_str());
-    folder.set_extension("json");
-
-    if !folder.exists() {
-        return Err(StatusCode::NOT_FOUND);
-    }
-
-    let content = match fs::read(folder.as_path()).await {
-        Ok(cont) => cont,
-        Err(e) => {
-            error!("Unable to open Dashboard {} file: {}", path, e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    };
-
-    match serde_json::from_slice(content.as_slice()) {
-        Ok(dash) => {
-            let dash: dashboard::Dashboard = dash;
-            Ok(html!{ (dash) })
-        },
-        Err(e) => {
-            error!("Unable to parse Dashboard {} json file: {}", path, e);
-            Err(StatusCode::IM_A_TEAPOT) // LOL
-        }
-    }
+    super::get_dashboard(datastore, path).await.map(|dash| html!{ (dash) })
 }
 
 pub(super) async fn edit_dashboard(Path(path): Path<String>, State(datastore): State<DataStoreLocked>) -> Result<Markup, StatusCode> {
-    let mut folder = get_dashboard_folder(datastore).await?;
+    let mut folder = super::get_dashboard_folder(datastore).await?;
 
-    let test_dash = dashboard::Dashboard {
+    let test_dash = super::dashboard::Dashboard {
         size_x: 1000,
         size_y: 750,
         name: path.clone(),
-        elements: vec![dashboard::DashElement { name: "tester_1".to_string(), x: 150, y: 200, size_x: 500, size_y: 500, element: dashboard::DashElementType::Square("red".to_string()) }]
+        elements: vec![super::dashboard::DashElement { name: "tester_1".to_string(), x: 150, y: 200, size_x: 500, size_y: 500, element: super::dashboard::DashElementType::Square("red".to_string()) }]
     };
 
     folder.push(path.as_str());

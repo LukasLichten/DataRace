@@ -1,6 +1,9 @@
+use hashbrown::HashSet;
 use log::error;
 use maud::{html, Markup, PreEscaped, Render, DOCTYPE};
 use serde::{Deserialize, Serialize};
+
+use crate::PropertyHandle;
 
 fn header(name: &String) -> Markup {
     html! {
@@ -16,6 +19,18 @@ pub(crate) struct Dashboard {
     pub(crate) elements: Vec<DashElement>,
     pub(crate) size_x: i32,
     pub(crate) size_y: i32
+}
+
+impl Dashboard {
+    pub(crate) fn list_properties(&self) -> HashSet<PropertyHandle> {
+        let mut res = HashSet::<PropertyHandle>::new();
+
+        for e in &self.elements {
+            res.extend(e.list_properties());
+        }
+
+        res
+    }
 }
 
 impl Render for Dashboard {
@@ -34,12 +49,19 @@ impl Render for Dashboard {
         html! {
             (header(&self.name))
             body {
+                div id="DISCO" sytle="position: absolute; left: 0px; top: 0px; width: 100%; height: 100%; display: none; background-color:grey;" {
+                    div style="position: absolute; left: 40%; top: 50%" {
+                        "Disconnected"
+                    } 
+                }
                 div id="BODY" style=(format!("position: absolute; left: 0px; top: 0px; width: {}px; height: {}px;", self.size_x, self.size_y)) {
                     @for item in &self.elements {
                         (item)
                     }
                 }
             }
+
+            script src="/lib/socket.io.js" {}
 
             script {
                 "const BODY = document.getElementById('BODY');"
@@ -49,6 +71,16 @@ impl Render for Dashboard {
 
                 "let scale = 0;"
                 "console.log('Hello Everynya!');"
+
+                "var socket = io();"
+                "socket.on('test', function(msg) {"
+                    "console.log(msg);"
+                "});"
+
+                "socket.on('require-auth', function() {"
+                    "console.log('Server requested auth');"
+                    (format!("socket.emit('auth-dashboard', '{}');", &self.name))
+                "});"
 
 
                 "function resize_event() {"        
@@ -84,6 +116,20 @@ impl Render for Dashboard {
                 
                 "window.onresize = resize_event;"
                 "resize_event();"
+
+                "function update_cycle() {"
+                    "console.log('Update Cycle');"
+                    @for item in &self.elements {
+                        (item.generate_update_js())
+                    }
+                "}"
+                "update_cycle();"
+
+                "socket.on('update', function(data) {"
+                    "console.log(data);"
+                "});"
+
+
             }
         }
         
@@ -111,8 +157,8 @@ impl Render for DashElement {
         html! {
             div id=(name) style=(format!("position: absolute; left:{}px; top:{}px; width:{}px; height:{}px;", self.x, self.y, self.size_x, self.size_y)) {
                 @match &self.element {
-                    DashElementType::Square(color) => {
-                        div style=(format!("width:100%;height:100%;background:{}",color)) {}
+                    DashElementType::Square(_color) => {
+                        div style=(format!("width:100%;height:100%;")) {}
                     },
                     DashElementType::Folder(elements) => {
                         @for item in elements {
@@ -167,6 +213,44 @@ impl DashElement {
         }
 
         true
+    }
+    
+    /// Returns a list of all properties used in scripts for this element
+    /// and all elements contained in it
+    fn list_properties(&self) -> HashSet<PropertyHandle> {
+        let mut res = HashSet::<PropertyHandle>::new();
+
+        if let DashElementType::Folder(elements) = &self.element {
+            for e in elements {
+                res.extend(e.list_properties());
+            }
+        }
+
+        // TODO aquire property handle
+
+        res
+    }
+
+    fn generate_update_js(&self) -> Markup {
+        let name = if let Some(n) = self.normilze_name() {
+            n
+        } else {
+            return html!();
+        };
+
+        html!{
+            "{"
+                (format!("{}.style.display = 'block';", name.as_str()))
+                @if let DashElementType::Square(color) = &self.element {
+                    (format!("{}.firstElementChild.style.background = '{}';", name.as_str(), color))
+                } @else if let DashElementType::Folder(elements) = &self.element {
+                    // TODO: Add if clause to not update if this folder is hidden
+                    @for e in elements {
+                        (e.generate_update_js())
+                    }
+                }
+            "}"
+        }
     }
 
     fn generate_resize_js(&self) -> Markup {

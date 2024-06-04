@@ -105,7 +105,7 @@ pub struct ReturnValue<T> {
 /// A Handle that serves for easy access to getting and updating properties
 /// These handles can (and should be where possible) generated at compile time
 #[repr(C)]
-#[derive(Clone,Copy,PartialEq,Eq,Hash,Debug)]
+#[derive(Clone,Copy,PartialEq,Eq,Hash,Debug, serde::Serialize, serde::Deserialize)]
 pub struct PropertyHandle {
     pub plugin: u64,
     pub property: u64
