@@ -49,21 +49,22 @@ impl Render for Dashboard {
         html! {
             (header(&self.name))
             body {
-                div id="DISCO" sytle="position: absolute; left: 0px; top: 0px; width: 100%; height: 100%; display: none; background-color:grey;" {
-                    div style="position: absolute; left: 40%; top: 50%" {
-                        "Disconnected"
-                    } 
-                }
                 div id="BODY" style=(format!("position: absolute; left: 0px; top: 0px; width: {}px; height: {}px;", self.size_x, self.size_y)) {
                     @for item in &self.elements {
                         (item)
                     }
+                }
+                div id="DISCO" style="position: absolute; left: 0px; top: 0px; width: 100%; height: 100%; display: none; background-color: #F2F2F288;" {
+                    div style="text-align: center; margin-top: 48vh; font-size: 2rem;" {
+                        "Disconnected"
+                    } 
                 }
             }
 
             script src="/lib/socket.io.js" {}
 
             script {
+                "const DISCO = document.getElementById('DISCO');"
                 "const BODY = document.getElementById('BODY');"
                 @for n in names {
                     (format!("const {0} = document.getElementById('{0}');", n))
@@ -80,6 +81,7 @@ impl Render for Dashboard {
                 "socket.on('require-auth', function() {"
                     "console.log('Server requested auth');"
                     (format!("socket.emit('auth-dashboard', '{}');", &self.name))
+                    "DISCO.style.display = 'none';"
                 "});"
 
 
@@ -129,7 +131,11 @@ impl Render for Dashboard {
                     "console.log(data);"
                 "});"
 
-
+                // Disconnect handler
+                "socket.on('disconnect', function() {"
+                    "console.log('Lost connection');"
+                    "DISCO.style.display = 'block';"
+                "});"
             }
         }
         
