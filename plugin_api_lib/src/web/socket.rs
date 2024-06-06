@@ -104,7 +104,7 @@ async fn update(io: SocketIo, datastore: SocketDataRef, rx: AsyncReceiver<Socket
                 
                 for d in dashes {
                     if let Some((list, _)) = cache.get_mut(d) {
-                        list.push((handle.clone(), value.clone()))
+                        list.push((handle.clone(), value.clone()));
                     }
                 }
             }
@@ -114,14 +114,14 @@ async fn update(io: SocketIo, datastore: SocketDataRef, rx: AsyncReceiver<Socket
         // Sending
         for (name, (list, _)) in cache.iter_mut() {
             if !list.is_empty() {
-                if let Err(e) = io.within(format!("dash.{}", name)).emit("update", &list) {
+                if let Err(e) = io.within(format!("dash.{}", name)).emit("update", [&list]) {
                     error!("Failed to send update to dashboard {}: {}", name, e);
                 } else {
                     list.clear();
                 }
             }
 
-            let _ = io.within(format!("dash.{}", name)).emit("test", format!("FreeBird!")).ok();
+            // let _ = io.within(format!("dash.{}", name)).emit("test", format!("FreeBird!")).ok();
         }
 
         // Sleeping to keep the update rate
@@ -157,7 +157,7 @@ async fn process_msg(
                 if let Some((_, count)) = cache.get_mut(&name) {
                     *count += 1;
                 } else {
-                    cache.insert(name, (vec![], 1));
+                    cache.insert(name, (UpdatePackage::new(), 1));
                 }
             } else {
                 error!("Dashboard {} tried to connect to websocket, but was unable to load file to start update (Did you delete the Dashboard?)", name);

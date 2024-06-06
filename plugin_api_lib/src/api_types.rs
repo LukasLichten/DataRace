@@ -1,6 +1,7 @@
 use std::mem::ManuallyDrop;
 
 use libc::c_char;
+use serde::ser::{SerializeStruct, SerializeTuple};
 use crate::utils; 
 use hashbrown::HashMap;
 
@@ -105,10 +106,23 @@ pub struct ReturnValue<T> {
 /// A Handle that serves for easy access to getting and updating properties
 /// These handles can (and should be where possible) generated at compile time
 #[repr(C)]
-#[derive(Clone,Copy,PartialEq,Eq,Hash,Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone,Copy,PartialEq,Eq,Hash,Debug)]
 pub struct PropertyHandle {
     pub plugin: u64,
     pub property: u64
+}
+
+impl serde::Serialize for PropertyHandle {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer {
+        
+        // Why are we doing it like this? Because javascript is retarded,
+        // and passing it as tupple (which becomes an array in js) or as struct the comparisions
+        // fail
+        // But on strings it work, and this is more compact anyway...
+        serializer.serialize_str(format!("{}|{}", self.plugin, self.property).as_str())
+    }
 }
 
 impl Default for PropertyHandle {

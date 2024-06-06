@@ -51,7 +51,7 @@ async fn serve_page(asset: &str) -> maud::Markup {
 }
 
 /// Retrieves the folder containing the dashboards
-async fn get_dashboard_folder(datastore: DataStoreLocked) -> Result<PathBuf, StatusCode> {
+async fn get_dashboard_folder(datastore: DataStoreLocked) -> Result<PathBuf, FsResourceError> {
     let ds_r = datastore.read().await;
     let folder = ds_r.get_config().get_dashboards_folder();
     // We keep lock over datarace to prevent a race condition with folder creation
@@ -61,6 +61,7 @@ async fn get_dashboard_folder(datastore: DataStoreLocked) -> Result<PathBuf, Sta
         info!("Dashboards folder did not exist, creating...");
         if let Err(e) = std::fs::create_dir_all(folder.as_path()) {
             error!("Failed to create Dashboards Folder: {}", e.to_string());
+            return Err(FsResourceError::from(e));
         }
     }
 
@@ -69,35 +70,91 @@ async fn get_dashboard_folder(datastore: DataStoreLocked) -> Result<PathBuf, Sta
     if folder.is_file() {
         // We are screwed
         error!("Unable to open dashboards folder because it is a file!");
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        return Err(FsResourceError::Custom("dashboards folder is a file".to_string()));
     }
 
     Ok(folder)
 }
 
 // Returns a certain dashboard by name
-async fn get_dashboard(datastore: DataStoreLocked, path: String) -> Result<dashboard::Dashboard, StatusCode> {
+async fn get_dashboard(datastore: DataStoreLocked, path: String) -> Result<dashboard::Dashboard, FsResourceError> {
     let mut folder = get_dashboard_folder(datastore).await?;
 
     folder.push(path.as_str());
     folder.set_extension("json");
 
+    read_dashboard_from_path(folder).await
+}
+
+async fn read_dashboard_from_path(folder: PathBuf) -> Result<dashboard::Dashboard, FsResourceError> {
     if !folder.exists() {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(FsResourceError::DoesNotExist);
     }
 
     let content = match fs::read(folder.as_path()).await {
         Ok(cont) => cont,
         Err(e) => {
-            error!("Unable to open Dashboard {} file: {}", path, e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return Err(FsResourceError::from(e));
         }
     };
 
     serde_json::from_slice(content.as_slice()).map_err(|e| {
-        error!("Unable to parse Dashboard {} json file: {}", path, e);
-        StatusCode::IM_A_TEAPOT
+        FsResourceError::from(e)
     })
+}
+
+pub(crate) enum FsResourceError {
+    DoesNotExist,
+    Custom(String),
+    FSError(std::io::Error),
+    SerdeParseError(serde_json::Error)
+}
+
+impl From<std::io::Error> for FsResourceError {
+    fn from(value: std::io::Error) -> Self {
+        Self::FSError(value)
+    }
+}
+
+impl From<serde_json::Error> for FsResourceError {
+    fn from(value: serde_json::Error) -> Self {
+        Self::SerdeParseError(value)
+    }
+}
+
+impl FsResourceError {
+    fn into_response(self, resource_name: String) -> Response {
+        let mut res = maud::html! {
+            (maud::DOCTYPE)
+            meta charset="utf-8";
+            title { "Error - DataRace" }
+            (self.format(Some(resource_name)))
+        }.into_response();
+
+        *res.status_mut() = match self {
+            Self::DoesNotExist => StatusCode::NOT_FOUND,
+            Self::Custom(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::FSError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::SerdeParseError(_) => StatusCode::INTERNAL_SERVER_ERROR
+        };
+
+        res
+    }
+
+    fn format(&self, resource_name: Option<String>) -> String {
+        format!("Unable to load Resource{}: {}",
+            match resource_name {
+                Some(text) => format!(" {}", text),
+                None => String::new()
+            },
+            match self {
+                Self::DoesNotExist => "Does Not Exist".to_string(),
+                Self::Custom(text) => text.clone(),
+                Self::FSError(e) => format!("Failed to open file: {}", e.to_string()),
+                Self::SerdeParseError(e) => format!("Unable to parse: {}", e.to_string())
+            }
+        )
+    }
 }
 
 // File is placed in assets/js_lib/socket.io.min.js

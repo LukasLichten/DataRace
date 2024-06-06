@@ -1,13 +1,15 @@
 use std::str::FromStr;
 
-use axum::{extract::{Path, State}, http::StatusCode};
+use axum::{extract::{Path, State}, response::{IntoResponse, Response}};
 use log::error;
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 use tokio::fs::{self, DirEntry};
 
 use crate::utils::Value;
 
-use super::utils::DataStoreLocked;
+use super::{utils::DataStoreLocked, FsResourceError};
+
+use super::dashboard::*;
 
 pub(super) async fn serve_asset(file: &str) -> PreEscaped<String> {
     let mut path = std::path::PathBuf::from_str("./plugin_api_lib/assets").unwrap();
@@ -98,21 +100,26 @@ pub(super) async fn index(State(datastore): State<DataStoreLocked>) -> Markup {
 }
 
 
-pub(super) async fn dashboard_list(State(datastore): State<DataStoreLocked>) -> Result<Markup, StatusCode> {
-    fn parse_dir_entry(item: DirEntry) -> Option<String> {
+pub(super) async fn dashboard_list(State(datastore): State<DataStoreLocked>) -> Result<Markup, Response> {
+    async fn parse_dir_entry(item: DirEntry) -> Option<(String, Dashboard)> {
         let path = item.path();
 
-        let name = path.file_stem()?.to_str()?;
-        Some(name.to_string())
+        let name = path.file_stem()?.to_str()?.to_string();
+
+        if let Ok(dash) = super::read_dashboard_from_path(path).await {
+            Some((name, dash))
+        } else {
+            None
+        }
     }
 
-    let folder = super::get_dashboard_folder(datastore).await?;
+    let folder = super::get_dashboard_folder(datastore).await.map_err(|e| e.into_response("list of all Dashboards".to_string()))?;
 
     let mut iter = match fs::read_dir(folder.as_path()).await {
         Ok(iter) => iter,
         Err(e) => {
             error!("Unable to read content of the Dashboards folder: {}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return Err(super::FsResourceError::from(e).into_response("list of all Dashboards".to_string()));
         }
     };
 
@@ -121,13 +128,13 @@ pub(super) async fn dashboard_list(State(datastore): State<DataStoreLocked>) -> 
 
         ul class="dashboard-list" {
             @while let Ok(Some(item)) = iter.next_entry().await {
-                @if let Some(cont) = parse_dir_entry(item) {
+                @if let Some((path, dash)) = parse_dir_entry(item).await {
                     li {
                         div class="dashboard-entry" {
-                            h3 { (cont) }
+                            h3 { (dash.name) }
                             div {
-                                a class="button" target="_blank" href=(format!("./dashboard/render/{}", cont)) { "Open" }
-                                a class="button" target="_blank" href=(format!("./dashboard/edit/{}", cont)) { "Edit" }
+                                a class="button" target="_blank" href=(format!("./dashboard/render/{}", path)) { "Open" }
+                                a class="button" target="_blank" href=(format!("./dashboard/edit/{}", path)) { "Edit" }
                             }
                         }
                     }
@@ -185,18 +192,30 @@ pub(super) async fn settings() -> Markup {
     generate_page(cont, 3).await
 }
 
-pub(super) async fn load_dashboard(Path(path): Path<String>, State(datastore): State<DataStoreLocked>) -> Result<Markup, StatusCode> {
-    super::get_dashboard(datastore, path).await.map(|dash| html!{ (dash) })
+pub(super) async fn load_dashboard(Path(path): Path<String>, State(datastore): State<DataStoreLocked>) -> Response {
+    match super::get_dashboard(datastore, path.clone()).await {
+        Ok(dash) => html!{ (dash) }.into_response(),
+        Err(e) => e.into_response(path)
+    }
 }
 
-pub(super) async fn edit_dashboard(Path(path): Path<String>, State(datastore): State<DataStoreLocked>) -> Result<Markup, StatusCode> {
-    let mut folder = super::get_dashboard_folder(datastore).await?;
+pub(super) async fn edit_dashboard(Path(path): Path<String>, State(datastore): State<DataStoreLocked>) -> Result<Markup, Response> {
+    let mut folder = super::get_dashboard_folder(datastore).await.map_err(|e| e.into_response(path.clone()))?;
 
-    let test_dash = super::dashboard::Dashboard {
+    let test_dash = Dashboard {
         size_x: 1000,
         size_y: 750,
         name: path.clone(),
-        elements: vec![super::dashboard::DashElement { name: "tester_1".to_string(), x: 150, y: 200, size_x: 500, size_y: 500, element: super::dashboard::DashElementType::Square("red".to_string()) }]
+        elements: vec![
+            DashElement {
+                name: "tester_3".to_string(),
+                x: Property::Fixed(150),
+                y: Property::Fixed(200),
+                size_x: Property::Fixed(500),
+                size_y: Property::Fixed(400),
+                visible: Property::Fixed(true),
+                element: super::dashboard::DashElementType::Square("red".to_string()) 
+            }]
     };
 
     folder.push(path.as_str());
@@ -207,13 +226,13 @@ pub(super) async fn edit_dashboard(Path(path): Path<String>, State(datastore): S
         Ok(val) => val,
         Err(e) => {
             error!("Unable to parse Dashboard {} to a json: {}", path, e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return Err(FsResourceError::from(e).into_response(path));
         }
     };
 
     if let Err(e) = fs::write(folder.as_path(), json.as_bytes()).await {
         error!("Unable to save Dashboard {}: {}", path, e);
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        return Err(FsResourceError::from(e).into_response(path));
     }
 
     Ok(html!{

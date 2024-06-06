@@ -70,6 +70,7 @@ impl Render for Dashboard {
                     (format!("const {0} = document.getElementById('{0}');", n))
                 }
 
+                "let DATA = new Map();"
                 "let scale = 0;"
                 "console.log('Hello Everynya!');"
 
@@ -119,16 +120,15 @@ impl Render for Dashboard {
                 "window.onresize = resize_event;"
                 "resize_event();"
 
-                "function update_cycle() {"
-                    "console.log('Update Cycle');"
+                "socket.on('update', function(UP_ARR) {"
+                    "const UPDATE = new Map(UP_ARR);"
+                    "console.log(UPDATE);"
+
+                    (PreEscaped("UPDATE.forEach((value, key) => DATA.set(key, value));"))
+                    
                     @for item in &self.elements {
                         (item.generate_update_js())
                     }
-                "}"
-                "update_cycle();"
-
-                "socket.on('update', function(data) {"
-                    "console.log(data);"
                 "});"
 
                 // Disconnect handler
@@ -145,23 +145,25 @@ impl Render for Dashboard {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct DashElement {
     pub(crate) name: String,
-    pub(crate) x: i32,
-    pub(crate) y: i32,
-    pub(crate) size_x: i32,
-    pub(crate) size_y: i32,
+    pub(crate) x: Property<i64>,
+    pub(crate) y: Property<i64>,
+    pub(crate) size_x: Property<i64>,
+    pub(crate) size_y: Property<i64>,
+    pub(crate) visible: Property<bool>,
     pub(crate) element: DashElementType,
 }
 
 impl Render for DashElement {
     fn render(&self) -> Markup {
-        let name = if let Some(n) = self.normilze_name() {
+        let name = if let Some(n) = self.normalize_name() {
             n
         } else {
             return html!();
         };
 
         html! {
-            div id=(name) style=(format!("position: absolute; left:{}px; top:{}px; width:{}px; height:{}px;", self.x, self.y, self.size_x, self.size_y)) {
+            div id=(name) style=(format!("position: absolute; left:{}px; top:{}px; width:{}px; height:{}px;",
+                self.x.get_static_value(), self.y.get_static_value(), self.size_x.get_static_value(), self.size_y.get_static_value())) {
                 @match &self.element {
                     DashElementType::Square(_color) => {
                         div style=(format!("width:100%;height:100%;")) {}
@@ -171,9 +173,9 @@ impl Render for DashElement {
                             (item)
                         }
                     },
-                    // _ => {
-                    //     
-                    // }
+                    DashElementType::Text(text) => {
+                        div { (text.get_static_value()) }
+                    }
                 }
             }
         }
@@ -183,7 +185,7 @@ impl Render for DashElement {
 impl DashElement {
     /// Names are reformated to lower case, but are also checked to insure requirements:
     /// ascii alphanumeric with additionally _
-    fn normilze_name(&self) -> Option<String> {
+    fn normalize_name(&self) -> Option<String> {
         let name = self.name.to_lowercase();
         
         if !name.chars().all(|x| x.is_ascii_digit() || x.is_ascii_lowercase() || x == '_') {
@@ -197,7 +199,7 @@ impl DashElement {
     /// Gathers up the name of this element (and any potential sub elements)
     /// and insures there are no name collisions
     fn gather_names(&self, list: &mut Vec<String>) -> bool {
-        let name = if let Some(n) = self.normilze_name() {
+        let name = if let Some(n) = self.normalize_name() {
             n
         } else {
             return false;
@@ -226,19 +228,32 @@ impl DashElement {
     fn list_properties(&self) -> HashSet<PropertyHandle> {
         let mut res = HashSet::<PropertyHandle>::new();
 
-        if let DashElementType::Folder(elements) = &self.element {
-            for e in elements {
-                res.extend(e.list_properties());
+        match &self.element {
+            DashElementType::Folder(elements) => {
+                for e in elements {
+                    res.extend(e.list_properties());
+                }
+            },
+            DashElementType::Square(_) => {
+
+            },
+            DashElementType::Text(text) => {
+                text.add_property_handle_to_collection(&mut res);
             }
         }
 
-        // TODO aquire property handle
+        self.x.add_property_handle_to_collection(&mut res);
+        self.y.add_property_handle_to_collection(&mut res);
+        self.size_x.add_property_handle_to_collection(&mut res);
+        self.size_y.add_property_handle_to_collection(&mut res);
+        self.visible.add_property_handle_to_collection(&mut res);
+
 
         res
     }
 
     fn generate_update_js(&self) -> Markup {
-        let name = if let Some(n) = self.normilze_name() {
+        let name = if let Some(n) = self.normalize_name() {
             n
         } else {
             return html!();
@@ -246,21 +261,38 @@ impl DashElement {
 
         html!{
             "{"
-                (format!("{}.style.display = 'block';", name.as_str()))
-                @if let DashElementType::Square(color) = &self.element {
-                    (format!("{}.firstElementChild.style.background = '{}';", name.as_str(), color))
-                } @else if let DashElementType::Folder(elements) = &self.element {
-                    // TODO: Add if clause to not update if this folder is hidden
-                    @for e in elements {
-                        (e.generate_update_js())
-                    }
+                // Handling visibility
+                @if let Property::Computed(_) = self.visible {
+
+                } @else {
+                    (format!("{}.style.display = '{}';", name.as_str(),
+                        match self.visible.get_static_value() {
+                            true => "block",
+                            false => "none"
+                        } ))
                 }
+
+                
+                // Updating internal value
+                @match &self.element {
+                    DashElementType::Square(color) => (format!("{}.firstElementChild.style.background = '{}';", name.as_str(), color)),
+                    DashElementType::Folder(elements) => {
+                        @for e in elements {
+                            (e.generate_update_js())
+                        }
+                    },
+                    DashElementType::Text(text) => {
+                        @if text.is_computed() {
+                            (PreEscaped(format!("{}.firstElementChild.textContent = {};", name.as_str(), text.generate_read_js())))
+                        }
+                    }
+                } 
             "}"
         }
     }
 
     fn generate_resize_js(&self) -> Markup {
-        let name = if let Some(n) = self.normilze_name() {
+        let name = if let Some(n) = self.normalize_name() {
             n
         } else {
             return html!();
@@ -270,10 +302,10 @@ impl DashElement {
             // We are in the resize function already,
             // we have access to the update scale value to apply to all dimensions
             "{"
-                (format!("let offset_x = {} * scale;", self.x))
-                (format!("let offset_y = {} * scale;", self.y))
-                (format!("let scale_x = {} * scale;", self.size_x))
-                (format!("let scale_y = {} * scale;", self.size_y))
+                (PreEscaped(format!("let offset_x = {} * scale;", self.x.generate_read_js())))
+                (PreEscaped(format!("let offset_y = {} * scale;", self.y.generate_read_js())))
+                (PreEscaped(format!("let scale_x = {} * scale;", self.size_x.generate_read_js())))
+                (PreEscaped(format!("let scale_y = {} * scale;", self.size_y.generate_read_js())))
 
                 (format!("{}.style.left = offset_x + 'px';", name.as_str()))
                 (format!("{}.style.top = offset_y + 'px';", name.as_str()))
@@ -282,6 +314,7 @@ impl DashElement {
 
             "}"
 
+            // Size in Folders does not constrain the content (except if I at some point implement % scaling)
             @if let DashElementType::Folder(elements) = &self.element {
                 "{"
                     @for e in elements {
@@ -293,25 +326,112 @@ impl DashElement {
     }
 }
 
-/// Size in Folders does not constrain the content (except if I at some point implement % scaling)
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) enum DashElementType {
     Square(String),
+    Text(Property<String>),
     Folder(Vec<DashElement>)
 }
 
 
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) enum Property<T> {
     Fixed(T),
     Computed(String)
 }
 
+impl Property<bool> {
+    fn generate_read_js(&self) -> String {
+        match self {
+            Property::Fixed(val) => {
+                val.to_string()
+            },
+            Property::Computed(_) => {
+                if let Some(res) = self.gen_handle_js() {
+                    format!("{}.Bool", res)
+                } else {
+                    self.get_static_value().to_string()
+                }
+            }
+        }
+    }
+}
+
 impl Property<i64> {
-    pub fn get_value(&self) -> i64 {
+    fn generate_read_js(&self) -> String {
+        match self {
+            Property::Fixed(val) => {
+                val.to_string()
+            },
+            Property::Computed(_) => {
+                if let Some(res) = self.gen_handle_js() {
+                    format!("{}", res)
+                } else {
+                    self.get_static_value().to_string()
+                }
+            }
+        }
+    }
+}
+
+impl Property<String> {
+    fn generate_read_js(&self) -> String {
+        match self {
+            Property::Fixed(val) => {
+                format!("'{}'", val)
+            },
+            Property::Computed(_) => {
+                if let Some(res) = self.gen_handle_js() {
+                    format!("{}.Str", res)
+                } else {
+                    self.get_static_value().to_string()
+                }
+            }
+        }
+    }
+}
+
+impl<T> Property<T> {
+    fn gen_handle_js(&self) -> Option<String> {
+        if let Some(handle) = self.get_property_handle() {
+            let serial = serde_json::to_string(&handle).ok()?;
+            Some(format!("DATA.get({})", serial))
+            
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn get_property_handle(&self) -> Option<PropertyHandle> {
+        match self {
+            Property::Computed(handle) => {
+                PropertyHandle::new(handle.as_str())
+            },
+            _ => None
+        }
+
+    }
+
+    pub(crate) fn is_computed(&self) -> bool {
+        match self {
+            Property::Fixed(_) => false,
+            Property::Computed(_) => true
+        }
+    }
+
+    pub(crate) fn add_property_handle_to_collection(&self, set: &mut HashSet<PropertyHandle>) {
+        if let Some(res) = self.get_property_handle() {
+            set.insert(res);
+        }
+    }
+}
+
+impl<T> Property<T> where T: Default + Clone {
+    pub(crate) fn get_static_value(&self) -> T {
         match self {
             Property::Fixed(res) => res.clone(),
-            Property::Computed(prop) => {
-                0
+            Property::Computed(_) => {
+                T::default()
             }
         }
     }
