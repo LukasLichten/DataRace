@@ -12,7 +12,7 @@ use super::{utils::DataStoreLocked, FsResourceError};
 use super::dashboard::*;
 
 pub(super) async fn serve_asset(file: &str) -> PreEscaped<String> {
-    let mut path = std::path::PathBuf::from_str("./plugin_api_lib/assets").unwrap();
+    let mut path = std::path::PathBuf::from_str("./lib/assets").unwrap();
     path.push(file);
 
     let val = std::fs::read_to_string(path.as_path()).unwrap();

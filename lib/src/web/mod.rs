@@ -22,7 +22,7 @@ pub(crate) async fn run_webserver(datastore: DataStoreLocked, shutdown: Arc<Atom
         .route("/dashboard/edit/:id", get(pages::edit_dashboard))
         .route("/properties", get(pages::properties))
         .route("/setting", get(pages::settings))
-        .route("/style.css", get(serve_css))
+        .route("/style.css", get(css_main_style))
         .route("/lib/socket.io.js", get(js_lib_socket_io))
         .with_state(datastore)
         .layer(layer);
@@ -34,14 +34,6 @@ pub(crate) async fn run_webserver(datastore: DataStoreLocked, shutdown: Arc<Atom
         .await?;
     info!("Webserver stopped!");
     Ok(())
-}
-
-async fn serve_css() -> Response {
-    let mut res = serve_page("style.css").await.into_response();
-    let header = res.headers_mut();
-    header.insert(axum::http::header::CONTENT_TYPE, "text/css".parse().expect("string is string"));
-
-    res
 }
 
 async fn serve_page(asset: &str) -> maud::Markup {
@@ -168,7 +160,26 @@ async fn js_lib_socket_io() -> Response {
     
     Response::builder()
         .status(200)
-        .header("content-type", "application/javascript; charset=utf-8")
+        .header(axum::http::header::CONTENT_TYPE, "application/javascript; charset=utf-8")
         .body(b)
         .expect("Failed to generate responde containing the socket.io js lib. Please recompile")
+}
+
+// File is placed in assets/style.css
+//
+// For debugging this should be dynmaically loaded (code provided)
+async fn css_main_style() -> Response {
+    let b = axum::body::Body::try_from(include_str!("../../assets/style.css"))
+                .expect("Failed to generate BODY responde containing the style css. Please recompile");
+
+    // let b = {
+    //     let res = serve_page("style.css").await.into_response();
+    //     res.into_body()
+    // };
+    
+    Response::builder()
+        .status(200)
+        .header(axum::http::header::CONTENT_TYPE, "text/css")
+        .body(b)
+        .expect("Failed to generate responde containing the style css. Please recompile")
 }

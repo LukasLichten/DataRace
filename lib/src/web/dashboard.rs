@@ -71,7 +71,7 @@ impl Render for Dashboard {
                 }
 
                 "let DATA = new Map();"
-                "let scale = 0;"
+                "let SCALE = 0;"
                 "console.log('Hello Everynya!');"
 
                 "var socket = io();"
@@ -87,29 +87,33 @@ impl Render for Dashboard {
 
 
                 "function resize_event() {"        
-                    (format!("let scale_to_w = window.innerWidth / {};", self.size_x))
-                    (format!("let scale_to_h = window.innerHeight / {};", self.size_y))
+                    "{"
+                        // We indent it to prevent name collisions
+                        "console.log('Resize Event: ' + window.innerWidth + '/' + window.innerHeight);"
+                        (format!("let scale_to_w = window.innerWidth / {};", self.size_x))
+                        (format!("let scale_to_h = window.innerHeight / {};", self.size_y))
 
-                    (PreEscaped("if (scale_to_h < scale_to_w) {"))
-                        // Window is wider then tall, so we are pillarboxing by offsetting the sides
-                        "console.log('Scaling Dashboard to Pillar Boxing');"
-                        "scale = scale_to_h;"
-                        (format!("let width = {} * scale;", self.size_x))
-                        "let gap = (window.innerWidth - width)/2;"
-                        "BODY.style.left = gap + 'px';"
-                        "BODY.style.top = '0px';"
-                        "BODY.style.width = width + 'px';"
-                        "BODY.style.height = window.innerHeight + 'px';"
-                    "} else {"
-                        // Letterboxing instead
-                        "console.log('Scaling Dashboard to Letter Boxing');"
-                        "scale = scale_to_w;"
-                        (format!("let height = {} * scale;", self.size_y))
-                        "let gap = (window.innerHeight - height)/2;"
-                        "BODY.style.left = '0px';"
-                        "BODY.style.top = height + 'px';"
-                        "BODY.style.width = window.innerWidth + 'px';"
-                        "BODY.style.height = height + 'px';"
+                        (PreEscaped("if (scale_to_h < scale_to_w) {"))
+                            // Window is wider then tall, so we are pillarboxing by offsetting the sides
+                            "console.log('Scaling Dashboard to Pillar Boxing (' + scale_to_h + 'x)');"
+                            "SCALE = scale_to_h;"
+                            (format!("let width = {} * SCALE;", self.size_x))
+                            "let gap = (window.innerWidth - width)/2;"
+                            "BODY.style.left = gap + 'px';"
+                            "BODY.style.top = '0px';"
+                            "BODY.style.width = width + 'px';"
+                            "BODY.style.height = window.innerHeight + 'px';"
+                        "} else {"
+                            // Letterboxing instead
+                            "console.log('Scaling Dashboard to Letter Boxing (' + scale_to_w + 'x)');"
+                            "SCALE = scale_to_w;"
+                            (format!("let height = {} * SCALE;", self.size_y))
+                            "let gap = (window.innerHeight - height)/2;"
+                            "BODY.style.left = '0px';"
+                            "BODY.style.top = gap + 'px';"
+                            "BODY.style.width = window.innerWidth + 'px';"
+                            "BODY.style.height = height + 'px';"
+                        "}"
                     "}"
 
                     @for item in &self.elements {
@@ -165,8 +169,8 @@ impl Render for DashElement {
             div id=(name) style=(format!("position: absolute; left:{}px; top:{}px; width:{}px; height:{}px;",
                 self.x.get_static_value(), self.y.get_static_value(), self.size_x.get_static_value(), self.size_y.get_static_value())) {
                 @match &self.element {
-                    DashElementType::Square(_color) => {
-                        div style=(format!("width:100%;height:100%;")) {}
+                    DashElementType::Square(color) => {
+                        div style=(format!("width:100%;height:100%;background:{}", color)) {}
                     },
                     DashElementType::Folder(elements) => {
                         @for item in elements {
@@ -302,10 +306,10 @@ impl DashElement {
             // We are in the resize function already,
             // we have access to the update scale value to apply to all dimensions
             "{"
-                (PreEscaped(format!("let offset_x = {} * scale;", self.x.generate_read_js())))
-                (PreEscaped(format!("let offset_y = {} * scale;", self.y.generate_read_js())))
-                (PreEscaped(format!("let scale_x = {} * scale;", self.size_x.generate_read_js())))
-                (PreEscaped(format!("let scale_y = {} * scale;", self.size_y.generate_read_js())))
+                (PreEscaped(format!("let offset_x = {} * SCALE;", self.x.generate_read_js())))
+                (PreEscaped(format!("let offset_y = {} * SCALE;", self.y.generate_read_js())))
+                (PreEscaped(format!("let scale_x = {} * SCALE;", self.size_x.generate_read_js())))
+                (PreEscaped(format!("let scale_y = {} * SCALE;", self.size_y.generate_read_js())))
 
                 (format!("{}.style.left = offset_x + 'px';", name.as_str()))
                 (format!("{}.style.top = offset_y + 'px';", name.as_str()))
