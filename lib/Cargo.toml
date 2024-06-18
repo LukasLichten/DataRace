@@ -1,5 +1,5 @@
 [package]
-name = "datarace_plugin_api"
+name = "datarace"
 version = "0.1.0"
 edition = "2021"
 repository = "https://github.com/LukasLichten/DataRace"

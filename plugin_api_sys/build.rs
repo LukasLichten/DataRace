@@ -2,8 +2,8 @@ use bindgen;
 use std::{env, path::PathBuf};
 
 // Env Variables
-const ENV_LIB_PATH: &str = "DATARACE_PLUGIN_API_LIB_PATH";
-const ENV_HEADER_FILE: &str = "DATARACE_PLUGIN_API_HEADER_FILE";
+const ENV_LIB_PATH: &str = "DATARACE_LIB_PATH";
+const ENV_HEADER_FILE: &str = "DATARACE_LIB_HEADER_FILE";
 
 pub fn main() {
     // Linking
@@ -64,7 +64,7 @@ fn find_and_bind_lib(mut try_env: bool) -> PathBuf {
     };
 
     let bin = if let Some(path) = env_var {
-        // Env overright was set
+        // Env override was set
         let mut path = PathBuf::from(path);
         
         if path.is_file() {
@@ -86,7 +86,7 @@ fn find_and_bind_lib(mut try_env: bool) -> PathBuf {
 
     // Testing if Library is present
     let lib = if cfg!(target_os = "linux") {
-        let test = bin.join("libdatarace_plugin_api.so");
+        let test = bin.join("libdatarace.so");
         if !test.exists() {
             if try_env {
                 // We failed to find the library where specified, but we can still retry default
@@ -94,7 +94,7 @@ fn find_and_bind_lib(mut try_env: bool) -> PathBuf {
                 return find_and_bind_lib(false);
             }
 
-            panic!("Unable to find libdatarace_plugin_api.so within output directory! Make sure to build plugin_api_lib first (and in the same release mode)!");
+            panic!("Unable to find libdatarace.so within output directory! Make sure to build lib first (and in the same release mode)!");
         } else {
             // Rerun if the library has been updated
             // Also 
@@ -102,7 +102,7 @@ fn find_and_bind_lib(mut try_env: bool) -> PathBuf {
             test
         }
     } else if cfg!(target_os = "windows") {
-        let test = bin.join("datarace_plugin_api.dll.lib");
+        let test = bin.join("datarace.dll.lib");
         if !test.exists() {
             if try_env {
                 // We failed to find the library where specified, but we can still retry default
@@ -110,25 +110,25 @@ fn find_and_bind_lib(mut try_env: bool) -> PathBuf {
                 return find_and_bind_lib(false);
             }
 
-            panic!("Unable to find datarace_plugin_api.dll.lib within output directory! Make sure to build plugin_api_lib first (and in the same release mode)!");
+            panic!("Unable to find datarace.dll.lib within output directory! Make sure to build lib first (and in the same release mode)!");
         } else {
             // Rerun if the library has been updated
             // Also 
             println!("cargo:rerun-if-changed={}",test.to_str().unwrap());
-            bin.join("datarace_plugin_api.dll")
+            bin.join("datarace.dll")
         }
     } else {
         println!("cargo:warning=Unable to verify if Library is present... Unknown Plattform");
-        bin.join("datarace_plugin_api.dylib")
+        bin.join("datarace.dylib")
     };
 
     println!("cargo:rustc-link-search={}",bin.to_str().unwrap());
     if cfg!(target_os = "windows") {
         // Windows linker wants the .lib, rust builds *.dll, *.dll.lib, etc.
         // But if we just give it the normal name it will look for *.lib, so this is the work around for it
-        println!("cargo:rustc-link-lib=dylib=datarace_plugin_api.dll");
+        println!("cargo:rustc-link-lib=dylib=datarace.dll");
     } else {
-        println!("cargo:rustc-link-lib=dylib=datarace_plugin_api");
+        println!("cargo:rustc-link-lib=dylib=datarace");
     }
 
     lib

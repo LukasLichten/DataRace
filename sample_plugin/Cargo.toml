@@ -8,4 +8,4 @@ crate_type = ["cdylib"]
 bench = false
 
 [dependencies]
-datarace_plugin_api_wrapper = { path = "../plugin_api_wrapper" }
+datarace_plugin_api = { path = "../plugin_api" }

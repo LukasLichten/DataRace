@@ -20,6 +20,12 @@ This is perfect for a universal GameManager, so it can take the property from an
 We shallow_clone similar to subscription, and then set allow_edit inside the PropertyContainer to false (as we don't own it, we are just passing it through).  
 We would need to be informed about the gamereader changing type of the original property, so we can change too.  
 
+## Array Value Type
+Instead of having many properties, eahc of which you have to subscribe to, and then have to index over, this would give a handle to a fixed sized array.
+This handle is opaque to the plugin, it would call functions on it to access values with it similar to it's own PluginHandle.
+So the Struct the Handle points to can contain the ValueContainer atomics, so the values can be updated without allocating a new array each time we want to read one or two values.
+Values inside need to be able to be None Type.
+
 ## Message for other plugins launching
 We could send a plugin whenever a new plugin registers.  
 This would allow a plugin to subscribe (and garantee it goes through) or register special properties as appropriate.  

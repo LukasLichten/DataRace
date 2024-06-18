@@ -1,10 +1,10 @@
-use datarace_plugin_api_wrapper::wrappers::{DataStoreReturnCode, Message, PluginHandle, Property, PropertyHandle};
+use datarace_plugin_api::wrappers::{DataStoreReturnCode, Message, PluginHandle, Property, PropertyHandle};
 
 // This is requires to handle deallocating strings
-datarace_plugin_api_wrapper::macros::free_string_fn!();
+datarace_plugin_api::macros::free_string_fn!();
 
 // Generates the required plugin description
-datarace_plugin_api_wrapper::macros::plugin_descriptor_fn!("sample_plugin", 0, 1, 0);
+datarace_plugin_api::macros::plugin_descriptor_fn!("sample_plugin", 0, 1, 0);
 
 // This generates the extern funcs, while also wrapping the types
 // you pass in the two function names that handle init and update
@@ -12,9 +12,9 @@ datarace_plugin_api_wrapper::macros::plugin_descriptor_fn!("sample_plugin", 0, 1
 // the init handle function (which will then be stored into the state)
 // But if you don't want the state automatically saved, you can save parse a boolean in as a forth
 // value and turn it off (ideal if you want to spin up a worker thread in the init function)
-datarace_plugin_api_wrapper::macros::generate_funcs!(handle_init, handle_update, State);
+datarace_plugin_api::macros::generate_funcs!(handle_init, handle_update, State);
 
-const PROP_HANDLE: PropertyHandle = datarace_plugin_api_wrapper::macros::generate_property_handle!("sample_plugin.Test");
+const PROP_HANDLE: PropertyHandle = datarace_plugin_api::macros::generate_property_handle!("sample_plugin.Test");
 
 // Allows you to store data between invocations
 struct State {
@@ -27,8 +27,8 @@ struct State {
 // If you have auto save turned off you can return Result<(),ToString>
 fn handle_init(handle: PluginHandle<State>) -> Result<State,String> {
     let prop_name = "sample_plugin.Test";
-    let runtime_prop_handle = datarace_plugin_api_wrapper::api::generate_property_handle(prop_name).unwrap();
-    let compiled_prop_handle = datarace_plugin_api_wrapper::macros::generate_property_handle!(" sample_plugin.test");
+    let runtime_prop_handle = datarace_plugin_api::api::generate_property_handle(prop_name).unwrap();
+    let compiled_prop_handle = datarace_plugin_api::macros::generate_property_handle!(" sample_plugin.test");
 
     assert_eq!(runtime_prop_handle, compiled_prop_handle, "these will be equal for the same (case insensetive) name");
     assert_eq!(runtime_prop_handle, PROP_HANDLE, "including those in consts you can also stored them in consts");
@@ -56,7 +56,7 @@ fn handle_init(handle: PluginHandle<State>) -> Result<State,String> {
     //     api::log_info(&handle, "Property succesfully deleted");
     // }
 
-    let _ = handle.create_property("extra", datarace_plugin_api_wrapper::macros::generate_property_handle!("sample_plugin.extra"), Property::Str("We are number 1".to_string()));
+    let _ = handle.create_property("extra", datarace_plugin_api::macros::generate_property_handle!("sample_plugin.extra"), Property::Str("We are number 1".to_string()));
 
     Ok(State { lock_count: std::sync::atomic::AtomicU64::default() })
 }

@@ -13,7 +13,7 @@ pub mod reexport {
 
 /// For building callback functions simply
 pub mod macros {
-    pub use wrapper_macro::*;
+    pub use datarace_plugin_api_macro::*;
 }
 
 use std::ffi::CStr;

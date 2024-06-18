@@ -66,9 +66,9 @@ pub fn generate_funcs(input: TokenStream) -> TokenStream {
     } = parse_macro_input!(input as Functions);
     
     let handle_gen = if let Some(state) = state_type {
-        quote!{ unsafe { datarace_plugin_api_wrapper::wrappers::PluginHandle::<#state>::new(handle) } }
+        quote!{ unsafe { datarace_plugin_api::wrappers::PluginHandle::<#state>::new(handle) } }
     } else {
-        quote!{ unsafe { datarace_plugin_api_wrapper::wrappers::PluginHandle::<()>::new(handle) } }
+        quote!{ unsafe { datarace_plugin_api::wrappers::PluginHandle::<()>::new(handle) } }
     };
 
     let init_handle = if auto_save {
@@ -88,7 +88,7 @@ pub fn generate_funcs(input: TokenStream) -> TokenStream {
 
     quote! {
 #[no_mangle]
-pub extern "C" fn init(handle: *mut datarace_plugin_api_wrapper::reexport::PluginHandle) -> std::os::raw::c_int {
+pub extern "C" fn init(handle: *mut datarace_plugin_api::reexport::PluginHandle) -> std::os::raw::c_int {
     let han = #handle_gen;
     let res = std::panic::catch_unwind(|| {
         #init_handle
@@ -97,12 +97,12 @@ pub extern "C" fn init(handle: *mut datarace_plugin_api_wrapper::reexport::Plugi
     match res {
         Ok(Ok(_)) => 0,
         Ok(Err(text)) => {
-            let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::<std::os::raw::c_void>::new_raw(handle);
+            let han = datarace_plugin_api::wrappers::PluginHandle::<std::os::raw::c_void>::new_raw(handle);
             han.log_error(text.to_string());
             1
         },
         Err(_) => {
-            let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::<std::os::raw::c_void>::new_raw(handle);
+            let han = datarace_plugin_api::wrappers::PluginHandle::<std::os::raw::c_void>::new_raw(handle);
             han.log_error("Plugin Init Paniced!");
             10
         }
@@ -110,9 +110,9 @@ pub extern "C" fn init(handle: *mut datarace_plugin_api_wrapper::reexport::Plugi
 }
 
 #[no_mangle]
-pub extern "C" fn update(handle: *mut datarace_plugin_api_wrapper::reexport::PluginHandle, msg: datarace_plugin_api_wrapper::reexport::Message) -> std::os::raw::c_int {
+pub extern "C" fn update(handle: *mut datarace_plugin_api::reexport::PluginHandle, msg: datarace_plugin_api::reexport::Message) -> std::os::raw::c_int {
     let han = #handle_gen;
-    let message = datarace_plugin_api_wrapper::wrappers::Message::from(msg);
+    let message = datarace_plugin_api::wrappers::Message::from(msg);
     let res = std::panic::catch_unwind(|| {
         #update_name(han, message)
     });
@@ -120,12 +120,12 @@ pub extern "C" fn update(handle: *mut datarace_plugin_api_wrapper::reexport::Plu
     match res {
         Ok(Ok(_)) => 0,
         Ok(Err(text)) => {
-            let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::<std::os::raw::c_void>::new_raw(handle);
+            let han = datarace_plugin_api::wrappers::PluginHandle::<std::os::raw::c_void>::new_raw(handle);
             han.log_error(text.to_string());
             1
         },
         Err(_) => {
-            let han = datarace_plugin_api_wrapper::wrappers::PluginHandle::<std::os::raw::c_void>::new_raw(handle);
+            let han = datarace_plugin_api::wrappers::PluginHandle::<std::os::raw::c_void>::new_raw(handle);
             han.log_error("Plugin Update Paniced!");
             10
         }
@@ -197,8 +197,8 @@ pub fn plugin_descriptor_fn(input: TokenStream) -> TokenStream {
 
     quote! {
 #[no_mangle]
-pub extern "C" fn get_plugin_description() -> datarace_plugin_api_wrapper::reexport::PluginDescription {
-    datarace_plugin_api_wrapper::reexport::PluginDescription {
+pub extern "C" fn get_plugin_description() -> datarace_plugin_api::reexport::PluginDescription {
+    datarace_plugin_api::reexport::PluginDescription {
         id: #id,
         name: std::ffi::CString::new(#plugin_name).expect("string is string").into_raw(),
         version: [#version_major, #version_minor, #version_patch],
@@ -262,7 +262,7 @@ pub fn generate_property_handle(input: TokenStream) -> TokenStream {
 
     quote! {
         unsafe {
-            datarace_plugin_api_wrapper::wrappers::PropertyHandle::from_values(#id, #prop)
+            datarace_plugin_api::wrappers::PropertyHandle::from_values(#id, #prop)
         }
     }.into_token_stream().into()
 }

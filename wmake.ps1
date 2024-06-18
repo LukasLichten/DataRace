@@ -5,7 +5,7 @@ $root = Get-Location
 
 
 # Building Lib
-Set-Location .\plugin_api_lib
+Set-Location .\lib
 cargo build --release
 Set-Location $root
 

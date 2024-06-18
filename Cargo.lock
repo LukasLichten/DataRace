@@ -337,14 +337,6 @@ checksum = "7e962a19be5cfc3f3bf6dd8f61eb50107f356ad6270fbb3ed41476571db78be5"
 name = "datarace"
 version = "0.1.0"
 dependencies = [
- "built",
- "datarace_plugin_api_sys",
-]
-
-[[package]]
-name = "datarace_plugin_api"
-version = "0.1.0"
-dependencies = [
  "atomic-wait",
  "axum",
  "built",
@@ -366,20 +358,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "datarace_plugin_api"
+version = "0.1.0"
+dependencies = [
+ "datarace_plugin_api_macro",
+ "datarace_plugin_api_sys",
+]
+
+[[package]]
+name = "datarace_plugin_api_macro"
+version = "0.1.0"
+dependencies = [
+ "datarace_plugin_api_sys",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "datarace_plugin_api_sys"
 version = "0.1.0"
 dependencies = [
  "bindgen",
  "built",
  "libc",
-]
-
-[[package]]
-name = "datarace_plugin_api_wrapper"
-version = "0.1.0"
-dependencies = [
- "datarace_plugin_api_sys",
- "wrapper_macro",
 ]
 
 [[package]]
@@ -859,6 +860,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "launch_datarace"
+version = "0.1.0"
+dependencies = [
+ "built",
+ "datarace_plugin_api_sys",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1322,7 +1331,7 @@ checksum = "f98d2aa92eebf49b69786be48e4477826b256916e84a57ff2a4f21923b48eb4c"
 name = "sample_plugin"
 version = "0.1.0"
 dependencies = [
- "datarace_plugin_api_wrapper",
+ "datarace_plugin_api",
 ]
 
 [[package]]
@@ -2063,15 +2072,6 @@ name = "windows_x86_64_msvc"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dff9641d1cd4be8d1a070daf9e3773c5f67e78b4d9d42263020c057706765c04"
-
-[[package]]
-name = "wrapper_macro"
-version = "0.1.0"
-dependencies = [
- "datarace_plugin_api_sys",
- "quote",
- "syn 1.0.109",
-]
 
 [[package]]
 name = "zerocopy"

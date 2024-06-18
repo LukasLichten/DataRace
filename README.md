@@ -13,12 +13,15 @@ or talk to the Socket.io api instead.
 - Loading of Plugins out of the plugins folder
 - Implement basic API handles for data and messaging
 - Flesh out wrapper and sample plugin
-
+  
+In Progess:  
+- Implement socket.io server
+- Build dashboard rendering and editor
+  
 *Far future*:
 - cmd/env args, config files
-- Implement socket.io server
 - Build native game reader
-- Build dashboard rendering and editor
+- Build dashboard editor
 - Implementing the option to export telemetry logs
 - World domination
 - Stabilize API lol
@@ -35,15 +38,15 @@ More info found here: [rust-bindgen/requirements](https://rust-lang.github.io/ru
 *TODO*
 #### Dealing with `ProcMacro not expanded` lint
 This is a false positive, as the programm will still compile.  
-This happens due to the wrapper_macro crate (which you access through `datarace_plugin_api_wrapper::macros::*`)
+This happens due to the wrapper_macro crate (which you access through `datarace_plugin_api::macros::*`)
 also depending on `plugin_api_sys`, as it accesses the library during compiletime to define values (such as apiversion and name hashes).  
 There are two issues:  
 First, rust_analyer will make use of Debug mode, we usually compile in Release,
-so `libdatarace_plugin_api.so` does not exist (and it can't know that it could just compile it into existence), so `plugin_api_sys` fails to compile,
-`wrapper_macro` fails to compile, and we get `no proc macro present for crate`.  
-Second, even if you compile the lib in debug it will now fail with a new error. This one is due to the `wrapper_macro` being turned into a `.so`,
-and when rust_analyzer tries to invoke it the `libdatarace_plugin_api.so` (to which it links) can not be found, as while it is in the same folder,
-Linux links only to libraries in very specific places such as `/usr/lib`. A fix would be to place a version of `libdatarace_plugin_api.so` in there.  
+so `libdatarace.so` does not exist (and it can't know that it could just compile it into existence), so `plugin_api_sys` fails to compile,
+`plugin_api_macro` fails to compile, and we get `no proc macro present for crate`.  
+Second, even if you compile the lib in debug it will now fail with a new error. This one is due to the `plugin_api_macro` being turned into a `.so`,
+and when rust_analyzer tries to invoke it the `libdatarace.so` (to which it links) can not be found, as while it is in the same folder,
+Linux links only to libraries in very specific places such as `/usr/lib`. A fix would be to place a version of `libdatarace.so` in there.  
   
 As such I will stamp this off as a development only problem, once (in the far far future, humaity has colonized the galaxy...) this has a released version,
 available through package managers, this should be a none issue for plugin devs, as it would just build & runtime link to the version installed on their system
@@ -52,6 +55,7 @@ available through package managers, this should be a none issue for plugin devs,
 #### Linux:
 To build the plugin api and the executable run
 ```
+make build
 make
 ```
 
@@ -64,10 +68,11 @@ Use this powershell script:
 ```
 
 ### Project Structure
-- `main`: Houses the executable, which only serves as a launcher.
-- `plugin_api_lib`: Main Logic. Both serves to load the plugins, but also as API for them to link to.
+- `launcher`: Houses the executable, which only serves as a launcher.
+- `lib`: Main Logic. Both serves to load the plugins (provide datastorage, websocket and server), but also as API for them to link to.
 - `plugin_api_sys`: Serves to expose the (raw) function of the API while dealing with the linking.
-- `plugin_api_wrapper`: Provides a wrapper around the sys raw functions. Perfect for implementing plugins.
+- `plugin_api_macro`: Proc-Macro Crate, available through `plugin_api::macros`
+- `plugin_api`: Provides a wrapper around the sys raw functions. Perfect for implementing plugins.
 - `sample_plugin`: An example plugin in rust using the wrapper
   
 Rust typically leaves libraries as code that is compiled into the final binary,

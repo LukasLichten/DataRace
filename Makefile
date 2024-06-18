@@ -2,16 +2,16 @@
 
 all: plugin-api
 	@# only building the plugin-api, compile the plugin seperatly
-	LD_LIBRARY_PATH=./target/release/ ./target/release/datarace
+	LD_LIBRARY_PATH=./target/release/ ./target/release/launch_datarace
 
 build: plugin-api
 	cargo build --release
 
 plugin-api:
-	cd plugin_api_lib && cargo build --release
+	cd lib && cargo build --release
 
 api-debug:
-	cd plugin_api_lib && cargo build
+	cd lib && cargo build
 
 test-plugin:
 	mkdir -p plugins
