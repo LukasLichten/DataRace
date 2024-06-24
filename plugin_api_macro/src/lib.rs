@@ -1,137 +1,43 @@
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned, ToTokens};
-use syn::{parse::{Parse, ParseStream}, parse_macro_input, Ident, LitBool, LitInt, LitStr, Token};
+use syn::{parse::{Parse, ParseStream}, parse_macro_input, Ident, LitInt, LitStr, Token};
 
-struct Functions {
-    init_name: Ident,
-    update_name: Ident,
-    state_type: Option<Ident>,
-    auto_save: bool
+mod attr;
+
+/// Add this the function you want to handle the plugin init.  
+/// This function requires to take the PluginHandle as parameter,
+/// return type has to be Result<PluginState, String> or Result<(), String>.  
+///   
+/// Result<PluginState,String> means the state will be saved in the handle after return Ok.
+/// This is simpler then calling save_state!(handle), but does not work if you want to start a
+/// worker thread in init, as the save would occure after the thread is started, therefore a race
+/// condition.  
+/// Result<(),String> is ideal for this, but expects from you to save manually
+///   
+/// String is not a requirement, but the Err type must implement ToString (this may change in the
+/// future, requiering a specific type).  
+/// If you return Err the plugin is considered failed and will be shut down.  
+///   
+/// The function can not be async or ffi-abi, but can be unsafe. Visibility keywords (like pub) will be
+/// ignored, the function will be internal to the generated `extern "C" fn init`
+#[proc_macro_attribute]
+pub fn plugin_init(attr: TokenStream, item: TokenStream) -> TokenStream {
+    attr::plugin_init(attr, item)
 }
 
-impl Parse for Functions {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let init_name: Ident = input.parse()?;
-        input.parse::<Token![,]>()?;
-        let update_name: Ident = input.parse()?;
-        let (state_type, auto_save) = if input.parse::<Token![,]>().is_ok() {
-            let state_type: Ident = input.parse()?;
-            if input.parse::<Token![,]>().is_ok() {
-                let val:LitBool = input.parse()?;
-                (Some(state_type),val.value)
-            } else {
-                (Some(state_type),true)
-            }
-        } else {
-            (None,false)
-        };
-
-        Ok(Self {
-            init_name,
-            update_name,
-            state_type,
-            auto_save
-        })
-    }
-}
-
-/// Generates the init and update functions REQUIRED for your plugin<br>
-/// Pass in the name of the init_fn, update_in and optional state_type T and auto_save bool<br>
-/// <br>
-/// init_fn<br>
-/// This function needs to take a wrapper::PluginHandle<T> as parameter, and return a Result<T,ToString><br>
-/// <br>
-/// update_fn<br>
-/// This function needs to take a wrapper::PluginHandle<T> and wrapper::Message as parameter, and
-/// return Result<(),ToString><br>
-/// <br>
-/// If you don't want to use state, then set T to (), and not pass in a state_type.<br>
-/// If you want to define a state, but don't want to auto save it after init then you can pass in
-/// auto_save bool as false (Ideal for when you want to spin up your own thread). Then you don't
-/// need to return Result<T,ToString> for init_fn, a Result<(),ToString> is enough.<br>
-/// <br>
-/// Return Ok() if everything worked, use Err if not and to log the message.<br>
-/// Also, you don't have to use String, any type that implements ToString works (as long as you
-/// didn't Box it).<br>
-/// <br>
-/// If you return Err or panic a none 0 code is returned to DataRace, which will halt the execution
-/// of this plugin.
-#[proc_macro]
-pub fn generate_funcs(input: TokenStream) -> TokenStream {
-    let Functions {
-        init_name,
-        update_name,
-        state_type,
-        auto_save,
-    } = parse_macro_input!(input as Functions);
-    
-    let handle_gen = if let Some(state) = state_type {
-        quote!{ unsafe { datarace_plugin_api::wrappers::PluginHandle::<#state>::new(handle) } }
-    } else {
-        quote!{ unsafe { datarace_plugin_api::wrappers::PluginHandle::<()>::new(handle) } }
-    };
-
-    let init_handle = if auto_save {
-        quote! {
-            match #init_name(han) {
-                Ok(value) => {
-                    let han = #handle_gen;
-                    unsafe { han.store_state_now(value) }
-                    Ok(())
-                },
-                Err(e) => Err(e)
-            }
-        }
-    } else {
-        quote!{ #init_name(han) }
-    };
-
-    quote! {
-#[no_mangle]
-pub extern "C" fn init(handle: *mut datarace_plugin_api::reexport::PluginHandle) -> std::os::raw::c_int {
-    let han = #handle_gen;
-    let res = std::panic::catch_unwind(|| {
-        #init_handle
-    });
-
-    match res {
-        Ok(Ok(_)) => 0,
-        Ok(Err(text)) => {
-            let han = datarace_plugin_api::wrappers::PluginHandle::<std::os::raw::c_void>::new_raw(handle);
-            han.log_error(text.to_string());
-            1
-        },
-        Err(_) => {
-            let han = datarace_plugin_api::wrappers::PluginHandle::<std::os::raw::c_void>::new_raw(handle);
-            han.log_error("Plugin Init Paniced!");
-            10
-        }
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn update(handle: *mut datarace_plugin_api::reexport::PluginHandle, msg: datarace_plugin_api::reexport::Message) -> std::os::raw::c_int {
-    let han = #handle_gen;
-    let message = datarace_plugin_api::wrappers::Message::from(msg);
-    let res = std::panic::catch_unwind(|| {
-        #update_name(han, message)
-    });
-
-    match res {
-        Ok(Ok(_)) => 0,
-        Ok(Err(text)) => {
-            let han = datarace_plugin_api::wrappers::PluginHandle::<std::os::raw::c_void>::new_raw(handle);
-            han.log_error(text.to_string());
-            1
-        },
-        Err(_) => {
-            let han = datarace_plugin_api::wrappers::PluginHandle::<std::os::raw::c_void>::new_raw(handle);
-            han.log_error("Plugin Update Paniced!");
-            10
-        }
-    }
-}
-    }.into_token_stream().into()
+/// Add this the function you want to handle the plugin update.  
+/// This function requires to take the PluginHandle and Message as parameters,
+/// return type has to be Result<(), String>.  
+///   
+/// String is not a requirement, but the Err type must implement ToString (this may change in the
+/// future, requiering a specific type).  
+/// If you return Err the plugin is considered failed and will be shut down.  
+///   
+/// The function can not be async or ffi-abi, but can be unsafe. Visibility keywords (like pub) will be
+/// ignored, the function will be internal to the generated `extern "C" fn update`
+#[proc_macro_attribute]
+pub fn plugin_update(attr: TokenStream, item: TokenStream) -> TokenStream {
+    attr::plugin_update(attr, item)
 }
 
 struct DescriptorTokens {
@@ -162,11 +68,15 @@ impl Parse for DescriptorTokens {
 
 /// Generates the get_plugin_description function REQUIERED for your plugin <br>
 /// Pass in the name of your plugin, version major, version minor, version patch
+/// You have to pass in literals
 ///
 /// Name of your plugin is case sensitive on log and other user facing displays, however for
 /// generation fo the plugin id (like in the PropertyHandle) it will be treated case insensitive
 #[proc_macro]
 pub fn plugin_descriptor_fn(input: TokenStream) -> TokenStream {
+    // Wouldn't it be great to parse functions/const retrievals?
+    // Well, too bad, this is technically possible, but proc macros make it borderline impossible
+    // If YOU really want this, then make a pull request, this is too much bullshit for me.
     let DescriptorTokens {
         plugin_name,
         version_major,
@@ -177,8 +87,7 @@ pub fn plugin_descriptor_fn(input: TokenStream) -> TokenStream {
     let api_version = unsafe {
         datarace_plugin_api_sys::compiletime_get_api_version()
     };
-    
-    // TODO compiletime id generation
+
     let plugin_name_str = plugin_name.value();
     let id = unsafe {
         let ptr = std::ffi::CString::new(plugin_name_str).expect("plugin name can not be converted into CString").into_raw();
@@ -263,6 +172,119 @@ pub fn generate_property_handle(input: TokenStream) -> TokenStream {
     quote! {
         unsafe {
             datarace_plugin_api::wrappers::PropertyHandle::from_values(#id, #prop)
+        }
+    }.into_token_stream().into()
+}
+
+struct StateSaveTokens {
+    handle_name: Ident,
+    state: Ident
+}
+
+impl Parse for StateSaveTokens {
+    fn parse(input: ParseStream) -> syn::parse::Result<Self> {
+        let handle_name: Ident = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let state: Ident = input.parse()?;
+
+        Ok(StateSaveTokens {
+            handle_name,
+            state
+        })
+    }
+}
+
+/// This stores the state (specifically the pointer for the state) into the plugin handle.
+/// This requires setting a up in the root of your Plugin this:
+/// ```
+/// pub type PluginState = YourState
+/// ```
+/// Then you can pass an instance of `YourState` into this function.  
+///
+/// This is unsafe as there can be race conditions with get_state, so this is best
+/// used during init, prior to spinning up any other task.
+/// 
+/// The previous state is NOT deallocated, so you either call drop_state_now! first,
+/// or use handle.get_state_ptr() to retrieve the pointer (which you then deallocate after calling this
+/// function. Keep in mind, that deallocating is even more unsafe as just using this function, read
+/// more in drop_state_now!).
+/// Obviously you don't need to deallocate anything if you had never assigned a state before
+#[proc_macro]
+pub fn save_state_now(input: TokenStream) -> TokenStream {
+    let StateSaveTokens {
+        handle_name,
+        state
+    } = parse_macro_input!(input as StateSaveTokens);
+
+
+    quote! {
+    {
+        let t: crate::PluginState = #state;
+        let ptr = Box::into_raw(Box::new(t));
+        
+        let ptr = ptr.cast::<std::os::raw::c_void>();
+
+        #handle_name.store_state_ptr_now(ptr);
+    }
+    }.into_token_stream().into()
+
+}
+
+/// This retrieves a Reference to the PluginState from the PluginHandle (set by save_state_now! or init).  
+/// This requires setting a up in the root of your Plugin this:
+/// ```
+/// pub type PluginState = YourState
+/// ```
+///
+/// To use this pass in the PluginHandle
+///
+/// This function is save, however improper use can lead to unsafe memory access:
+/// - Calling drop_state_now! (or manually deallocating the pointer) while holding the reference returned by this
+/// - Using handle.store_state_ptr_now() with a pointer to an Object that is not of type PluginState
+/// - Setting a new State through save_state_now! while holding this reference will not update it
+#[proc_macro]
+pub fn get_state(input: TokenStream) -> TokenStream {
+    let handle_name = parse_macro_input!(input as Ident);
+
+
+    quote! {
+        unsafe {
+            let ptr = #handle_name.get_state_ptr(); 
+            ptr.cast::<crate::PluginState>().as_ref()
+        } 
+    }.into_token_stream().into()
+}
+
+/// This drops the current State object stored in the PluginHandle
+/// This requires setting a up in the root of your Plugin this:
+/// ```
+/// pub type PluginState = YourState
+/// ```
+///
+/// To use this pass in the PluginHandle
+///
+/// This function is incredibly unsafe, as (in a multi threaded enviorment, or having handed off
+/// closures) someone could still be holding a Reference to this state optained through get_state!,
+/// which would then point into freed memory.
+/// So this function should only be called during shutdown, after all potentially conflicting
+/// states have been shut down.
+/// Additional unsafety is that the pointer in the handle could have been set via handle.store_state_ptr_now() to
+/// a type that is not PluginState.
+///
+/// This function minds the case of the ptr being null, and also sets the pointer to null
+#[proc_macro]
+pub fn drop_state_now(input: TokenStream) -> TokenStream {
+    let handle_name = parse_macro_input!(input as Ident);
+
+    quote! {
+        {
+            let ptr = #handle_name.get_state_ptr().cast::<crate::PluginState>();
+            
+            if !ptr.is_null() {
+                #handle_name.store_state_ptr_now(std::ptr::null_mut());
+                
+                drop(Box::from_raw(ptr));
+            }
         }
     }.into_token_stream().into()
 }

@@ -16,7 +16,7 @@ macro_rules! drop_cstring {
     };
 }
 
-impl<T> PluginHandle<T> {
+impl PluginHandle {
     /// Logs a message with info level
     pub fn log_info <S: ToString>(&self, msg: S) {
         let ptr = create_cstring!(msg);

@@ -1,9 +1,12 @@
 use datarace_plugin_api::wrappers::{DataStoreReturnCode, Message, PluginHandle, Property, PropertyHandle};
 
+pub(crate) type PluginState = State;
+
 // This is requires to handle deallocating strings
 datarace_plugin_api::macros::free_string_fn!();
 
 // Generates the required plugin description
+// You have to pass in literals (at least so far, unfortunatly)
 datarace_plugin_api::macros::plugin_descriptor_fn!("sample_plugin", 0, 1, 0);
 
 // This generates the extern funcs, while also wrapping the types
@@ -12,21 +15,29 @@ datarace_plugin_api::macros::plugin_descriptor_fn!("sample_plugin", 0, 1, 0);
 // the init handle function (which will then be stored into the state)
 // But if you don't want the state automatically saved, you can save parse a boolean in as a forth
 // value and turn it off (ideal if you want to spin up a worker thread in the init function)
-datarace_plugin_api::macros::generate_funcs!(handle_init, handle_update, State);
+// datarace_plugin_api::macros::generate_funcs!(handle_init, handle_update, PluginState);
 
 const PROP_HANDLE: PropertyHandle = datarace_plugin_api::macros::generate_property_handle!("sample_plugin.Test");
 
+
 // Allows you to store data between invocations
-struct State {
+pub(crate) struct State {
     lock_count: std::sync::atomic::AtomicU64,
 }
 
 // This function handles the init
-// it takes a PluginHandle<T> and returns Result<T,ToString>
-// If you didn't pass in a State into the macro, then set T to ()
-// If you have auto save turned off you can return Result<(),ToString>
-fn handle_init(handle: PluginHandle<State>) -> Result<State,String> {
+//
+// it takes a PluginHandle and returns Result<PluginState,ToString>
+// This means the state returned on Ok is automatically saved.
+// If you don't want to automatically save the state (spin up worker threads during init),
+// then set Return to Result<(),String>
+//
+// Err(String) does not have to be string, just be a Type implementing ToString.
+// Returning Err will shutdown the plugin
+#[datarace_plugin_api::macros::plugin_init]
+fn handle_init(handle: PluginHandle) -> Result<PluginState,String> {
     let prop_name = "sample_plugin.Test";
+    
     let runtime_prop_handle = datarace_plugin_api::api::generate_property_handle(prop_name).unwrap();
     let compiled_prop_handle = datarace_plugin_api::macros::generate_property_handle!(" sample_plugin.test");
 
@@ -59,12 +70,16 @@ fn handle_init(handle: PluginHandle<State>) -> Result<State,String> {
     let _ = handle.create_property("extra", datarace_plugin_api::macros::generate_property_handle!("sample_plugin.extra"), Property::Str("We are number 1".to_string()));
 
     Ok(State { lock_count: std::sync::atomic::AtomicU64::default() })
+    // Ok(())
 }
 
-// this function deal with messages during runtime
-// it takes a PluginHandle<T> and Message, and returns Result<(),ToString>
-// If you didn't pass in a State into the macro, then set T to ()
-fn handle_update(handle: PluginHandle<State>, msg: Message) -> Result<(), String> {
+// This function deals with messages during runtime
+// it takes a PluginHandle and Message, and returns Result<(),ToString>
+//
+// Err(String) does not have to be string, just be a Type implementing ToString.
+// Returning Err will shutdown the plugin
+#[datarace_plugin_api::macros::plugin_update]
+fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
     match msg {
         Message::Lock => {
             // This message comes in to lock the plugin handle to perform some write (like creating
@@ -83,7 +98,7 @@ fn handle_update(handle: PluginHandle<State>, msg: Message) -> Result<(), String
             
             // Again, sample does not have a seperate thread currently, so we log
     
-            let state = handle.get_state().ok_or("No state :(".to_string())?;
+            let state = datarace_plugin_api::macros::get_state!(handle).ok_or("No state :(".to_string())?;
             handle.log_info(format!("Received Unlock #{}", state.lock_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
 
             let start = std::time::Instant::now();
@@ -144,7 +159,7 @@ fn handle_update(handle: PluginHandle<State>, msg: Message) -> Result<(), String
             // won't be send
 
             handle.log_info("See You, Space Cowboy...");
-            unsafe { handle.drop_state_now(); }
+            unsafe { datarace_plugin_api::macros::drop_state_now!(handle) }
         },
         _ => ()
     }
