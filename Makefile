@@ -1,17 +1,19 @@
-.phony: all build plugin-api api-debug test-plugin clean test final help 
+.phony: all build build-exec plugin-api test-plugin clean test help 
 
 all: plugin-api
-	@# only building the plugin-api, compile the plugin seperatly
+	# only building the plugin-api, compile the plugin seperatly
 	LD_LIBRARY_PATH=./target/release/ ./target/release/launch_datarace
 
-build: plugin-api
+build: plugin-api build-exec
+
+build-exec: 
 	cargo build --release
+
+run:
+	./target/release/launch_datarace
 
 plugin-api:
 	cd lib && cargo build --release
-
-api-debug:
-	cd lib && cargo build
 
 test-plugin:
 	mkdir -p plugins
@@ -25,21 +27,15 @@ clean:
 test: 
 	# cargo test -p sample_plugin
 	echo "TODO"
-	
-
-final: clean plugin-api
-	rm -fr target/final
-	mkdir target/final
-	echo "TODO"
 
 help:
 	@echo "Makefile for build DataRace"
-	@echo "make:             Runs 'make plugin-api' and then runs (use build prior to this)"
+	@echo "make:             Runs 'make plugin-api' and then runs (use build-exec prior to this)"
 	@echo "make build:       Builds Plugin-API and Executable (release mode)"
 	@echo "make plugin-api:  Only builds the plugin-api (release mode)"
-	@echo "make api-debug:   Builds Plugin-API in debug mode (to address issues with LSPs)"
+	@echo "make build-exec:  Only builds the executable (release mode)"
+	@echo "make run:         Runs it (distros libdatarace is used)"
 	@echo "make test-plugin: Builds the sample plugin"
 	@echo "make clean:       Runs cargo clean and deletes the PluginAPI.so (does not delete plugins/)"
 	@echo "make test:        TODO Runs tests on plugin api"
-	@echo "make final:       TODO Rebuilds and packages the executable for release"
 	@echo "make help:        Prints this info"

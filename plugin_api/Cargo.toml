@@ -2,7 +2,10 @@
 name = "datarace_plugin_api"
 version = "0.1.0"
 edition = "2021"
-
+authors = ["Lukas 'DerGeneralFluff' Lichten"]
+license = "GPL-3.0"
+repository = "https://github.com/LukasLichten/DataRace"
+description = "Crate for building plugins for DataRace"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]

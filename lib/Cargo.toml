@@ -2,8 +2,10 @@
 name = "datarace"
 version = "0.1.0"
 edition = "2021"
-repository = "https://github.com/LukasLichten/DataRace"
+authors = ["Lukas 'DerGeneralFluff' Lichten"]
 license = "GPL-3.0"
+repository = "https://github.com/LukasLichten/DataRace"
+description = "Core DataRace Library, loads plugins, stores data, and serves the webserver"
 
 [lib]
 crate_type = ["cdylib"]

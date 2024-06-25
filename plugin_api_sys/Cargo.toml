@@ -3,6 +3,10 @@ name = "datarace_plugin_api_sys"
 version = "0.1.0"
 edition = "2021"
 links = "datarace"
+authors = ["Lukas 'DerGeneralFluff' Lichten"]
+license = "GPL-3.0"
+repository = "https://github.com/LukasLichten/DataRace"
+description = "Sys crate that binds to libdatarace library"
 
 [build-dependencies]
 built = "0.7"

@@ -7,7 +7,8 @@ const ENV_HEADER_FILE: &str = "DATARACE_LIB_HEADER_FILE";
 
 pub fn main() {
     // Linking
-    let lib = find_and_bind_lib(true);
+    let could_be_installed = cfg!(target_os = "linux");
+    let lib = find_and_bind_lib(true, !could_be_installed);
     
     // Header File Getting
     let h_path = if let Ok(path) = env::var(ENV_HEADER_FILE) {
@@ -23,12 +24,28 @@ pub fn main() {
             panic!("Unable to canonicalize the path for the header file. It is advisable to provide absolute paths");
         }
     } else {
-        let target = lib.parent().unwrap().join(lib.file_stem().unwrap().to_str().unwrap().to_string() + ".h");
+        let name = lib.file_stem().unwrap().to_str().unwrap().to_string() + ".h";
+        let target = lib.parent().unwrap().join(name.clone());
         
         if !target.is_file() {
-            panic!("No header file present in output!");
+            if cfg!(target_os = "linux") {
+                // Header file should be in /usr/include
+                let mut target = lib.parent().unwrap().parent().unwrap().to_path_buf();
+                target.push("include");
+                target.push(name);
+                
+                if target.exists() {
+                    target
+                } else {
+                    panic!("No header file found in /usr/include (or in {})!", lib.parent().unwrap().to_str().unwrap());
+                }
+
+            } else {
+                panic!("No header file present in output!");
+            }
+        } else {
+            target
         }
-        target
     };
     
 
@@ -56,7 +73,7 @@ pub fn main() {
         .expect("Couldn't write bindings!");
 }
 
-fn find_and_bind_lib(mut try_env: bool) -> PathBuf {
+fn find_and_bind_lib(mut try_env: bool, tried_output: bool) -> PathBuf {
     let env_var = if try_env {
         env::var(ENV_LIB_PATH).ok()
     } else {
@@ -75,8 +92,11 @@ fn find_and_bind_lib(mut try_env: bool) -> PathBuf {
             path
         } else {
             println!("cargo:warning=Unable to process path provided in '{}', attempting default...", ENV_LIB_PATH);
-            return find_and_bind_lib(false);
+            return find_and_bind_lib(false, tried_output);
         }
+    } else if cfg!(target_os = "linux") && tried_output {
+        try_env = false;
+        PathBuf::try_from("/usr/lib").expect("Since when is /usr/lib an invalid path?")
     } else {
         try_env = false;
         PathBuf::from(env::var("OUT_DIR").expect("Rust build system is no longer setting OUT_DIR? Is it snowing in hell?")).join("../../../").
@@ -91,13 +111,16 @@ fn find_and_bind_lib(mut try_env: bool) -> PathBuf {
             if try_env {
                 // We failed to find the library where specified, but we can still retry default
                 println!("cargo:warning=Unable find library at {}, attempting at default...", bin.to_str().unwrap());
-                return find_and_bind_lib(false);
+                return find_and_bind_lib(false, tried_output);
+            }
+            if !tried_output {
+                // The library is not in output, but could be installed
+                return find_and_bind_lib(false, true);
             }
 
-            panic!("Unable to find libdatarace.so within output directory! Make sure to build lib first (and in the same release mode)!");
+            panic!("Unable to find libdatarace.so within output directory or installed! Make sure either install libdatarace or to build lib first (and in the same release mode)!");
         } else {
             // Rerun if the library has been updated
-            // Also 
             println!("cargo:rerun-if-changed={}",test.to_str().unwrap());
             test
         }
@@ -107,7 +130,7 @@ fn find_and_bind_lib(mut try_env: bool) -> PathBuf {
             if try_env {
                 // We failed to find the library where specified, but we can still retry default
                 println!("cargo:warning=Unable find library at {}, attempting at default...", bin.to_str().unwrap());
-                return find_and_bind_lib(false);
+                return find_and_bind_lib(false, tried_output);
             }
 
             panic!("Unable to find datarace.dll.lib within output directory! Make sure to build lib first (and in the same release mode)!");

@@ -2,6 +2,8 @@
 name = "sample_plugin"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR GPL-3.0"
+description = "A really cool plugin"
 
 [lib]
 crate_type = ["cdylib"]
@@ -11,4 +13,10 @@ bench = false
 # built = "0.7"
 
 [dependencies]
+# You can use this line in your plugin to import the api wrapper
+# datarace_plugin_api = { git = "https://github.com/LukasLichten/DataRace.git", branch = "master" }
+
+
+# This is used here to test the new development in the api
+# Does not work when actually developing a plugin
 datarace_plugin_api = { path = "../plugin_api" }
