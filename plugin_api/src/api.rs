@@ -1,5 +1,5 @@
-use std::ffi::CString;
-use crate::wrappers::{PluginHandle, Property, PropertyHandle, DataStoreReturnCode};
+use std::{ffi::CString, os::raw::c_void};
+use crate::wrappers::{DataStoreReturnCode, PluginHandle, PluginLockGuard, Property, PropertyHandle};
 
 use datarace_plugin_api_sys as sys;
 
@@ -147,6 +147,53 @@ impl PluginHandle {
 
         DataStoreReturnCode::from(res)
     }
+
+    /// Allows you to send a raw memory pointer to another plugin.  
+    /// The target is plugin id of the target plugin.  
+    /// reason serves as a way to communicate what this pointer is for, although the recipient is also
+    /// told your plugin id.  
+    /// Obviously managing void pointers is risky business, both recipients have to be on the same
+    /// package and understand what it stands for.
+    pub unsafe fn send_plugin_ptr_message(&self, target: u64, ptr: *mut c_void, reason: i64) -> DataStoreReturnCode {
+        let res = unsafe {
+            sys::send_ptr_msg_to_plugin(self.get_ptr(), target, ptr, reason)
+        };
+
+        DataStoreReturnCode::from(res)
+    }
+
+    /// Sends a message to the update function of your plugin.  
+    /// This type of internal message is useful for sending messages from worker threads, for example
+    /// that they failed, so you could restart them or shut the plugin down
+    pub fn send_internal_msg(&self, msg: i64) -> DataStoreReturnCode {
+        let res = unsafe {
+            sys::send_internal_msg(self.get_ptr(), msg)
+        };
+
+        DataStoreReturnCode::from(res)
+    }
+
+    
+    /// This is a way to Sync between your worker thread and the pluginloader.
+    /// While you set the plugin to locked the pluginloader will not intiate lock,
+    /// so you Don't need to provide your own sync mechanism through state and Lock/Unlock Messages.  
+    /// This function is blocking, and uses atomic wait to send the thread into sleep while waiting.
+    ///
+    /// However, you will still receive Lock and Unlock Message, especially Lock Messages will come
+    /// while your worker might still be holding the lock (as they come before the loader goes into
+    /// waiting for lock).  
+    /// 
+    /// Also it is important to unlock the plugin periodically, so the pluginloader can do mutable
+    /// work.
+    /// Futher, DO NOT request a lock while holding another PluginLockGuard (in the same context), this will lead to a
+    /// deadlock (as the first can't be dropped to unlock)!
+    ///
+    /// Once the Guard is dropped the plugin unlocks
+    pub fn lock_plugin<'a>(&'a self) -> PluginLockGuard<'a> {
+        unsafe { sys::lock_plugin(self.get_ptr()) };
+
+        PluginLockGuard { handle: self }
+    }
 }
 
 /// Generates the PropertyHandle used for reading and updating values
@@ -174,6 +221,26 @@ pub fn generate_property_handle<S: ToString>(name: S) -> Result<PropertyHandle, 
     }
 
     Ok(PropertyHandle::new(res.value))
+}
+
+/// Allows you to optain the id of another plugin based on it's name. 
+/// This function is intended for runtime use, compiletime macro is TODO
+///
+/// This function also checks if the name does not contain any invalid characters (currently only .),
+/// but does not check if the plugin is loaded.
+pub fn generate_foreign_plugin_id<S: ToString>(handle: &PluginHandle, name: S) -> Option<u64> {
+    let name_ptr = create_cstring!(name);
+
+    let res = unsafe {
+        sys::get_foreign_plugin_id(handle.get_ptr(), name_ptr)
+    };
+    drop_cstring!(name_ptr);
+
+    if res.valid {
+        Some(res.id)
+    } else {
+        None
+    }
 }
 
 // TODO reenqueue message function... although not really necessary

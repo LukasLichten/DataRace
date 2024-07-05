@@ -6,7 +6,7 @@ license = "MIT OR GPL-3.0"
 description = "A really cool plugin"
 
 [lib]
-crate_type = ["cdylib"]
+crate-type = ["cdylib"]
 bench = false
 
 [build-dependencies]

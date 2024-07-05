@@ -81,6 +81,21 @@ fn handle_init(handle: PluginHandle) -> Result<PluginState,String> {
 #[datarace_plugin_api::macros::plugin_update]
 fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
     match msg {
+        Message::StartupFinished => {
+            // This triggers after all init related Messages are processed, a good indication that
+            // all properties have been created.
+            // Can be used to spin up worker threads
+            
+
+            handle.log_info("Startup finished");
+        },
+        Message::OtherPluginStarted(id) => {
+            // Informs us of the startup of another plugin
+            // This allows us to do things like subscribe to it's properties,
+            // or deeper interactions through PluginMessages
+
+            handle.log_info(format!("We got informed of the startup of another plugin: {id}"))
+        },
         Message::Lock => {
             // This message comes in to lock the plugin handle to perform some write (like creating
             // a Property). This means we need to stop performing any reads on the handle
@@ -145,6 +160,7 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
             match res {
                 DataStoreReturnCode::Ok => {
                     handle.log_info("Changed");
+                    handle.send_internal_msg(2);
                 },
                 _ => {
                     handle.log_error(res);
@@ -161,7 +177,29 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
             handle.log_info("See You, Space Cowboy...");
             unsafe { datarace_plugin_api::macros::drop_state_now!(handle) }
         },
-        _ => ()
+        Message::InternalMsg(msg) => {
+            // Message from our plugin
+            // Useful to communicate from a workerthread into the main thread
+
+            handle.log_info(format!("Internal Message received: {msg}"));
+        },
+        Message::PluginMessagePtr { origin, ptr, reason } => {
+            // This is a message containing a raw memory pointer.
+            // Useful for deep interactions between plugins,
+            // but requires extreme caution and care to be taken when implementing.
+            //
+            // If you aren't interest in using it you can ignore these messages,
+            // technically if something sends you such a message it will leak memory,
+            // but this is acceptable, as sending unsolicited pointers is rude (and bad practice)
+            // anyway, so shouldn't happen
+            
+            let _ = (origin, ptr, reason); // Technically a memory leak, but who cares
+        },
+        Message::Unknown => {
+            // Fallback, for when the plugin is used with a newer version of libdatarace with more
+            // message types
+            handle.log_error("Unknown Message Received!");
+        }
     }
 
     Ok(())

@@ -1,7 +1,7 @@
 use libc::{c_char, c_void};
 use log::error;
 
-use crate::{pluginloader::LoaderMessage, utils, DataStoreReturnCode, Message, PluginDescription, PluginHandle, Property, PropertyHandle, ReturnValue, API_VERSION};
+use crate::{pluginloader::LoaderMessage, utils::{self, VoidPtrWrapper}, DataStoreReturnCode, Message, PluginDescription, PluginHandle, PluginNameHash, Property, PropertyHandle, ReturnValue, API_VERSION};
 
 
 macro_rules! get_handle {
@@ -318,6 +318,106 @@ pub extern "C" fn save_state_now(handle: *mut PluginHandle, state: *mut c_void) 
     }
     han.unlock();
 }
+
+/// Sends a message to the update function of your plugin.  
+/// This type of internal message is useful for sending messages from worker threads, for example
+/// that they failed, so you could restart them or shut the plugin down
+#[no_mangle]
+pub extern "C" fn send_internal_msg(handle: *mut PluginHandle, msg_code: i64) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+
+    if let Err(e) = han.sender.send(LoaderMessage::InternalMessage(msg_code)) {
+        error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
+        DataStoreReturnCode::DataCorrupted
+    } else {
+        DataStoreReturnCode::Ok
+    }
+}
+
+/// Allows you to send a raw memory pointer to another plugin.  
+/// The target is plugin id of the target plugin.  
+/// reason serves as a way to communicate what this pointer is for, although the recipient is also
+/// told your plugin id.  
+/// Obviously managing void pointers is risky business, both recipients have to be on the same
+/// package and understand what it stands for.
+#[no_mangle]
+pub extern "C" fn send_ptr_msg_to_plugin(handle: *mut PluginHandle, target: u64, ptr: *mut c_void, reason: i64) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+
+    if let Err(e) = han.sender.send(LoaderMessage::SendPluginMessagePtr((target, VoidPtrWrapper { ptr }, reason))) {
+        error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
+        DataStoreReturnCode::DataCorrupted
+    } else {
+        DataStoreReturnCode::Ok
+    }
+}
+
+/// Allows you to optain the id of another plugin based on it's name. 
+/// This function is intended for runtime use, for compiletime macros use `compiletime_get_plugin_name_hash()`.
+///
+/// The name is a nullterminated string that you need to deallocate after.  
+///
+/// This function also checks if the name does not contain any invalid characters (currently only .),
+/// but does not check if the plugin is loaded.
+#[no_mangle]
+pub extern "C" fn get_foreign_plugin_id(handle: *mut PluginHandle, name: *mut c_char) -> PluginNameHash {
+    let _han = get_handle!(handle, PluginNameHash { valid: false, id: 0 });
+    // We only aquire a reference to stop people from passing in null
+    
+    if let Some(str) = utils::get_string(name) {
+        let str = str.to_lowercase();
+        if let Some(val) = utils::generate_plugin_name_hash(str.as_str()) {
+            PluginNameHash { id: val, valid: true }    
+        } else {
+            PluginNameHash { id: 0, valid: false }
+        }
+    } else {
+        PluginNameHash { id: 0, valid: false }
+    }
+}
+
+/// This is a way to Sync between your worker thread and the pluginloader.
+/// While you set the plugin to locked the pluginloader will not intiate lock,
+/// so you Don't need to provide your own sync mechanism through state and Lock/Unlock Messages.  
+/// This function is blocking, and uses atomic wait to send the thread into sleep while waiting.
+///
+/// However, you will still receive Lock and Unlock Message, especially Lock Messages will come
+/// while your worker might still be holding the lock (as they come before the loader goes into
+/// waiting for lock).  
+/// 
+/// Also it is important to unlock the plugin periodically, so the pluginloader can do mutable
+/// work.
+/// Further, you need to make sure to always unlock, this won't unlock automatically when going out
+/// of scope/crashing.
+/// DO NOT call this function a second time before calling `unlock_plugin()`, this will deadlock,
+/// as this function will forever wait for the unlock.
+///
+/// Do not call this in the update or init function, as this can deadlock the plugin.
+#[no_mangle]
+pub extern "C" fn lock_plugin(handle: *mut PluginHandle) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+
+    han.lock();
+    DataStoreReturnCode::Ok
+}
+
+/// This is the other half of to `lock_plugin()`.
+/// It is likely a good idea to build a custom data type that calls `lock_plugin()` as a
+/// constructor, and this function during it's destructor, to avoid not unlocking the plugin
+/// when going out of scope/crashing.  
+///
+/// It is important to not call this function without previously locking the plugin, as
+/// this can cause undefine behavior.
+///
+/// Also a good idea not to use in the init and update functions.
+#[no_mangle]
+pub extern "C" fn unlock_plugin(handle: *mut PluginHandle) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+
+    han.unlock();
+    DataStoreReturnCode::Ok
+}
+
 
 /// Puts a message back into the Queue
 ///

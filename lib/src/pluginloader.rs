@@ -6,7 +6,7 @@ use log::{error, info, debug};
 
 use tokio::task::JoinSet;
 
-use crate::{api_types, datastore::DataStore, utils, DataStoreReturnCode, Message, MessageType, MessageValue, PluginHandle, PropertyHandle};
+use crate::{api_types, datastore::DataStore, utils::{self, VoidPtrWrapper}, DataStoreReturnCode, Message, MessagePtr, MessageType, MessageValue, PluginHandle, PropertyHandle};
 
 
 
@@ -133,6 +133,8 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
             drop(w_store);
 
             return Err(name);
+        } else if let Some(han) = unsafe { ptr_h.ptr.as_ref() } {
+            let _ = han.sender.as_async().send(LoaderMessage::StartupFinished).await;
         }
 
         let async_rec = receiver.to_async();
@@ -150,6 +152,21 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
                 LoaderMessage::UpdateSubscription(prop_handle, val_container) => update_subscription(&wrapper, &mut ptr_h, prop_handle, val_container),
                 LoaderMessage::Unsubscribe(prop_handle) => unsubscribe(&wrapper, &mut ptr_h, prop_handle).await,
                 LoaderMessage::HasUnsubscribed(id, prop_handle) => has_unsubscribed(&wrapper, &mut ptr_h, prop_handle, id),
+                
+                LoaderMessage::StartupFinished => startup_complete(&wrapper, &mut ptr_h).await,
+                LoaderMessage::OtherPluginStartup(id) => send_simple_message(&wrapper, &mut ptr_h,
+                    Message { sort: MessageType::OtherPluginStarted, value: MessageValue { plugin_id: id }}, "Failed on informing about other plugin"),
+                LoaderMessage::InternalMessage(msg) => send_simple_message(&wrapper, &mut ptr_h,
+                    Message { sort: MessageType::InternalMessage, value: MessageValue { internal_msg: msg }}, "Failed on processing plugin internal message"),
+                LoaderMessage::PluginMessagePtr((origin, ptr, reason)) => send_simple_message(&wrapper, &mut ptr_h,
+                    Message { sort: MessageType::PluginMessagePtr, value: MessageValue { message_ptr: MessagePtr { origin, message_ptr: ptr.ptr, reason } }},
+                    "Failed to process PluginMessagePtr"),
+                LoaderMessage::SendPluginMessagePtr((target, ptr, reason)) => {
+                    send_plugin_message(&ptr_h, target, LoaderMessage::PluginMessagePtr((id, ptr, reason))).await.map(|okay| if !okay {
+                        error!("Plugin {} failed to send message with ptr to plugin {}", get_plugin_name(&ptr_h), target);
+                    })
+                }
+
                 // LoaderMessage::Update(prop_handle, value) => {
                 //     let msg = LoaderMessage::Update(prop_handle, value);
                 //     send_update!(wrapper, ptr_h, msg);
@@ -243,6 +260,14 @@ pub(crate) enum LoaderMessage {
     UpdateSubscription(PropertyHandle, utils::ValueContainer),
     Unsubscribe(PropertyHandle),
     HasUnsubscribed(u64, PropertyHandle),
+    
+    InternalMessage(i64),
+    StartupFinished,
+    SendPluginMessagePtr((u64, VoidPtrWrapper, i64)),
+    PluginMessagePtr((u64, VoidPtrWrapper, i64)),
+    OtherPluginStartup(u64),
+    
+
     // Update(PropertyHandle, Value),
     // Removed(PropertyHandle),
     Shutdown
@@ -303,14 +328,26 @@ where
     Ok(())
 }
 
+fn send_update(wrapper: &PluginWrapper, ptr: &PtrWrapper, msg: Message, fail_error: &'static str) -> Result<(), MsgProcessingError> {
+    if wrapper.update(ptr.ptr, msg) != 0 {
+        return Err(MsgProcessingError::NoneZeroReturnCode(fail_error));
+    }
+
+    Ok(())
+}
+
+fn send_simple_message(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, msg: Message, fail_error: &'static str) -> Result<(), MsgProcessingError> {
+    send_unlock(wrapper, ptr)?;
+
+    send_update(wrapper, ptr, msg, fail_error)
+}
+
 /// Serves to check if the handle is locked, if not change that
 fn send_lock(wrapper: &PluginWrapper, ptr: &mut PtrWrapper) -> Result<(), MsgProcessingError> {
     if !ptr.is_locked {
         // We lock the plugin, then actually secure write lock
         // This is to prevent a lock trap from calls during the lock update
-        if wrapper.update(ptr.ptr, Message { sort: MessageType::Lock, value: MessageValue { flag: true } }) != 0 {
-            return Err(MsgProcessingError::NoneZeroReturnCode("Failed on lock"))
-        }
+        send_update(wrapper, ptr, Message { sort: MessageType::Lock, value: MessageValue { flag: true } }, "Failed on lock")?;
 
         let han = get_handle(ptr)?;
         han.lock();
@@ -330,9 +367,7 @@ fn send_unlock(wrapper: &PluginWrapper, ptr: &mut PtrWrapper) -> Result<(), MsgP
 
         ptr.is_locked = false;
 
-        if wrapper.update(ptr.ptr, Message { sort: MessageType::Unlock, value: MessageValue { flag: true } }) != 0 {
-            return Err(MsgProcessingError::NoneZeroReturnCode("Failed on unlock"))
-        }
+        send_update(wrapper, ptr, Message { sort: MessageType::Unlock, value: MessageValue { flag: true } }, "Failed on unlock")?;
     }
 
     Ok(())
@@ -530,4 +565,18 @@ fn has_unsubscribed(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, prop_handle: 
     }
 
     Ok(())
+}
+
+async fn startup_complete(wrapper: &PluginWrapper, ptr: &mut PtrWrapper) -> Result<(), MsgProcessingError> {
+    send_unlock(&wrapper, ptr)?;
+
+    let han = get_handle(ptr)?;
+    let id = han.id.clone();
+    let mut ds_w = han.datastore.write().await;
+
+    ds_w.set_plugin_ready(id).await;
+    
+    drop(ds_w);
+
+    send_update(&wrapper, ptr, Message { sort: MessageType::StartupFinished, value: MessageValue { flag: true } }, "Failed on informing about finshed startup")   
 }

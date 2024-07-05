@@ -1,6 +1,6 @@
 use libc::c_char;
 use serde::{Deserialize, Serialize}; 
-use std::{ffi::{CStr, CString}, sync::{atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering}, Arc, RwLock}};
+use std::{ffi::{CStr, CString}, fmt::Debug, sync::{atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering}, Arc, RwLock}};
 use kanal::{Sender, Receiver};
 use highway::{HighwayHash, HighwayHasher, Key};
 
@@ -25,6 +25,23 @@ pub fn get_string(ptr: *mut c_char) -> Option<String> {
 
 pub fn get_message_channel() -> (Sender<LoaderMessage>, Receiver<LoaderMessage>) {
     kanal::unbounded()
+}
+
+/// For handling void pointers send from plugins to other plugins
+#[derive(Debug)]
+pub(crate) struct VoidPtrWrapper {
+    pub ptr: *mut libc::c_void
+}
+
+unsafe impl Send for VoidPtrWrapper {}
+unsafe impl Sync for VoidPtrWrapper {}
+
+#[derive(Debug, PartialEq, Clone)]
+pub(crate) enum PluginStatus {
+    Init,
+    Running,
+    // ShutingDown,
+    // Crashed
 }
 
 #[derive(Debug)]

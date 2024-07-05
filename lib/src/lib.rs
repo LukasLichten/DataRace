@@ -3,7 +3,7 @@ use std::sync::{atomic::AtomicBool, Arc};
 use log::{info, error, debug};
 use tokio::runtime::Builder;
 
-pub const API_VERSION: u64 = 0;
+pub(crate) const API_VERSION: u64 = 0;
 
 mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
@@ -71,9 +71,6 @@ async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
 
     let mut plugin_set = pluginloader::load_all_plugins(datastore).await?;
 
-    web::run_webserver(datastore, sh_clone).await?;
-    
-
     // Handles closing the plugin tasks
     let handle = tokio::spawn(async move {
         while let Some(res) = plugin_set.join_next().await {
@@ -93,6 +90,8 @@ async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
 
         debug!("All Plugins have shut down");
     });
+
+    web::run_webserver(datastore, sh_clone).await?;
 
     // Stops the Runtime from closing when plugins are still running
     let _ = handle.await;

@@ -8,7 +8,7 @@ repository = "https://github.com/LukasLichten/DataRace"
 description = "Core DataRace Library, loads plugins, stores data, and serves the webserver"
 
 [lib]
-crate_type = ["cdylib"]
+crate-type = ["cdylib"]
 bench = false
 
 [build-dependencies]

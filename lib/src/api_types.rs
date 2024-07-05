@@ -1,7 +1,6 @@
 use std::mem::ManuallyDrop;
 
 use libc::c_char;
-use serde::ser::{SerializeStruct, SerializeTuple};
 use crate::utils; 
 use hashbrown::HashMap;
 
@@ -16,7 +15,7 @@ pub struct PluginHandle {
     pub(crate) version: [u16;3],
     pub(crate) state_ptr: *mut libc::c_void,
     free_string: extern "C" fn(ptr: *mut libc::c_char),
-    lock: std::sync::atomic::AtomicU32
+    lock: std::sync::atomic::AtomicU32,
 }
 
 impl PluginHandle {
@@ -37,7 +36,7 @@ impl PluginHandle {
             sender,
             version,
             lock: std::sync::atomic::AtomicU32::new(0),
-            state_ptr: std::ptr::null_mut()
+            state_ptr: std::ptr::null_mut(),
         }
     }
 
@@ -58,7 +57,8 @@ impl PluginHandle {
     }
     
     pub(crate) fn unlock(&self) {
-        self.lock.store(0, std::sync::atomic::Ordering::Release)
+        self.lock.store(0, std::sync::atomic::Ordering::Release);
+        atomic_wait::wake_one(&self.lock);
     }
 
     #[allow(dead_code)]
@@ -207,15 +207,23 @@ pub struct Message {
 
 #[repr(u8)]
 pub enum MessageType {
+    StartupFinished = 0,
+    OtherPluginStarted = 1,
+    InternalMessage = 2,
+    PluginMessagePtr = 5,
+
     // Update = 0,
     // Removed = 1,
     Lock = 10,
     Unlock = 11,
-    Shutdown = 20
+    Shutdown = 20,
 }
 
 #[repr(C)]
 pub union MessageValue {
+    pub plugin_id: u64,
+    pub internal_msg: i64,
+    pub message_ptr: MessagePtr,
     pub flag: bool,
     pub removed_property: PropertyHandle,
     pub update: ManuallyDrop<UpdateValue> 
@@ -225,6 +233,14 @@ pub union MessageValue {
 pub struct UpdateValue {
     pub handle: PropertyHandle,
     pub value: Property
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct MessagePtr {
+    pub origin: u64,
+    pub message_ptr: *mut libc::c_void,
+    pub reason: i64
 }
 
 // impl TryFrom<crate::pluginloader::LoaderMessage> for Message {

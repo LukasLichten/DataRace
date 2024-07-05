@@ -1,4 +1,4 @@
-use std::{fmt::Display, os::raw::c_void};
+use std::{fmt::Display, num::TryFromIntError, os::raw::c_void};
 use crate::get_string;
 use datarace_plugin_api_sys as sys;
 use std::ffi::CString;
@@ -64,6 +64,10 @@ impl PartialEq for PropertyHandle {
         self.inner.plugin == other.inner.plugin && self.inner.property == other.inner.property
     }
 }
+
+// User is required locking when acting with these, but forcing wrappers is just silly
+unsafe impl Sync for PluginHandle {}
+unsafe impl Send for PluginHandle {}
 
 /// Value of a Property
 /// This type is used for setting and getting Values
@@ -149,6 +153,63 @@ impl Property {
 
         }
     }
+
+    /// This function will panic if a duration of more then 584,942 years is requested
+    /// Negative durations are supported through the negative flag
+    pub fn from_duration(dur: std::time::Duration, negative: bool) -> Self {
+        let mut t:i64 = dur.as_micros().try_into().expect("Why in the ever loving world did you need more then 580k years?");
+        if negative {
+            t *= -1;
+        }
+
+        Property::Duration(t)
+    }
+
+    /// Negative durations are supported
+    pub fn from_micros(dur: i64) -> Self {
+        Property::Duration(dur)
+    }
+
+    /// This function will panic if a duration of more then 584,942 years is requested
+    /// Negative durations are supported
+    pub fn from_millis(dur: i64) -> Self {
+        let val = dur.checked_mul(1000).expect("Why in the ever loving world did you need more then 580k years?");
+
+        Property::Duration(val)
+    }
+
+    /// For precision it is recommended to use an integer with `from_millis` or `from_micros` due
+    /// to floating point error.  
+    /// This function will overflow if more then 584,942 years is requested.
+    /// Negative durations are supported
+    pub fn from_sec(dur: f64) -> Self {
+        let dur = dur * 1000.0 * 1000.0;
+        let val:i64 = dur as i64;
+
+        Property::Duration(val)
+    }
+
+    /// If this is a Property::Duration this will convert the contained time into a Rust Duration.  
+    /// As Duration does not support negative time stamps the boolean indicates negativity.
+    pub fn to_duration(&self) -> Option<(std::time::Duration, bool)> {
+        if let Property::Duration(t) = self {
+            let (neg, val) = if *t < 0 {
+                (true, t * -1)
+            } else {
+                (false, t.clone())
+            };
+
+            let dur = std::time::Duration::from_micros(val as u64);
+            Some((dur, neg))
+        } else {
+            None
+        }
+    }
+
+    /// Uses `ToString` to convert text types into a Property.
+    pub fn from_string<T>(value: T) -> Self where T: ToString {
+        Property::Str(value.to_string())
+    }
 }
 
 impl ToString for Property {
@@ -164,7 +225,97 @@ impl ToString for Property {
     }
 }
 
-// TODO From<X> function for Property
+impl From<i64> for Property {
+    fn from(value: i64) -> Self {
+        Property::Int(value)
+    }
+}
+
+impl From<i32> for Property {
+    fn from(value: i32) -> Self {
+        Property::Int(value.into())
+    }
+}
+
+impl From<u32> for Property {
+    fn from(value: u32) -> Self {
+        Property::Int(value.into())
+    }
+}
+
+impl From<i16> for Property {
+    fn from(value: i16) -> Self {
+        Property::Int(value.into())
+    }
+}
+
+impl From<u16> for Property {
+    fn from(value: u16) -> Self {
+        Property::Int(value.into())
+    }
+}
+
+impl From<i8> for Property {
+    fn from(value: i8) -> Self {
+        Property::Int(value.into())
+    }
+}
+
+impl From<u8> for Property {
+    fn from(value: u8) -> Self {
+        Property::Int(value.into())
+    }
+}
+
+impl TryFrom<usize> for Property {
+    type Error = TryFromIntError;
+
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        Ok(Property::Int(value.try_into()?))
+    }
+}
+
+impl TryFrom<isize> for Property {
+    type Error = TryFromIntError;
+
+    fn try_from(value: isize) -> Result<Self, Self::Error> {
+        Ok(Property::Int(value.try_into()?))
+    }
+}
+
+impl TryFrom<u64> for Property {
+    type Error = TryFromIntError;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        Ok(Property::Int(value.try_into()?))
+    }
+}
+
+impl From<f32> for Property {
+    fn from(value: f32) -> Self {
+        Property::Float(value.into())
+    }
+}
+
+impl From<f64> for Property {
+    fn from(value: f64) -> Self {
+        Property::Float(value)
+    }
+}
+
+impl From<bool> for Property {
+    fn from(value: bool) -> Self {
+        Property::Bool(value)
+    }
+}
+
+impl From<std::time::Duration> for Property {
+    /// This function will panic if a duration of more then 584,942 years is requested
+    /// If you want to define a negative duration, use `from_duration()`
+    fn from(value: std::time::Duration) -> Self {
+        Property::Duration(value.as_micros().try_into().expect("Why in the ever loving world did you need more then 580k years?"))
+    }
+}
 
 /// Serve as status codes for api calls
 #[derive(Debug, PartialEq)]
@@ -179,6 +330,22 @@ pub enum DataStoreReturnCode {
     DataCorrupted = 11,
     Unknown = 255
 
+}
+
+impl DataStoreReturnCode {
+    pub fn to_result(self) -> Result<(), DataStoreReturnCode> {
+        match self {
+            DataStoreReturnCode::Ok => Ok(()),
+            e => Err(e)
+        }
+    }
+
+    pub fn is_ok(&self) -> bool {
+        match self {
+            DataStoreReturnCode::Ok => true,
+            _ => false
+        }
+    }
 }
 
 impl From<sys::DataStoreReturnCode> for DataStoreReturnCode {
@@ -213,11 +380,15 @@ impl Display for DataStoreReturnCode {
     }
 }
 
-
 pub enum Message {
     Lock,
     Unlock,
     Shutdown,
+    StartupFinished,
+    OtherPluginStarted(u64),
+    InternalMsg(i64),
+    PluginMessagePtr{origin: u64, ptr: *mut c_void, reason: i64 },
+
 
     // Update(PropertyHandle, Property),
     // Remove(PropertyHandle),
@@ -232,6 +403,21 @@ impl From<sys::Message> for Message {
             sys::MessageType_Shutdown => Message::Shutdown,
             sys::MessageType_Lock => Message::Lock,
             sys::MessageType_Unlock => Message::Unlock,
+            sys::MessageType_StartupFinished => Message::StartupFinished,
+            sys::MessageType_OtherPluginStarted => {
+                Message::OtherPluginStarted(unsafe { value.value.plugin_id })
+            },
+            sys::MessageType_InternalMessage => {
+                Message::InternalMsg(unsafe {
+                    value.value.internal_msg
+                })
+            },
+            sys::MessageType_PluginMessagePtr => {
+                let val = unsafe { value.value.message_ptr };
+                
+                Message::PluginMessagePtr { origin: val.origin, ptr: val.message_ptr, reason: val.reason }
+            },
+
             // sys::MessageType_Update => {
             //     unsafe {
             //         let val = value.value.update;
@@ -255,5 +441,17 @@ impl Message {
     #[allow(dead_code)]
     pub(crate) fn to_c(self) -> sys::Message {
         todo!("Implement to c for Message for reenqueueing...");
+    }
+}
+
+/// This guard provides protection against locks from the Pluginloader,
+/// the lock is released when this struct is dropped (which you should regularly do).
+pub struct PluginLockGuard<'a> {
+    pub(crate) handle: &'a PluginHandle
+}
+
+impl<'a> Drop for PluginLockGuard<'a> {
+    fn drop(&mut self) {
+        unsafe { sys::unlock_plugin(self.handle.get_ptr()) };
     }
 }

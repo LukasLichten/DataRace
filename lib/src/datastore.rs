@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 use kanal::{AsyncSender, Sender};
 use hashbrown::HashMap;
 
-use crate::{pluginloader::LoaderMessage, utils::ValueContainer, DataStoreReturnCode, PluginHandle, PropertyHandle};
+use crate::{pluginloader::LoaderMessage, utils::{PluginStatus, ValueContainer}, DataStoreReturnCode, PluginHandle, PropertyHandle};
 
 /// This is our centralized State
 pub(crate) struct DataStore {
@@ -41,7 +41,7 @@ impl DataStore {
             return None;
         } 
 
-        self.plugins.insert(id, Plugin { channel: sx.to_async(), handle });
+        self.plugins.insert(id, Plugin { channel: sx.to_async(), handle, plugin_status: PluginStatus::Init });
         Some(())
     }
 
@@ -81,7 +81,7 @@ impl DataStore {
     } 
 
     pub(crate) fn count_plugins(&self) -> usize {
-        self.plugins.iter().count()
+        self.plugins.iter().filter(|(_,p)|p.plugin_status == PluginStatus::Running).count()
     }
 
     pub(crate) async fn start_shutdown(&mut self) {
@@ -144,11 +144,29 @@ impl DataStore {
     pub(crate) fn iter_properties<'a>(&'a self) -> hashbrown::hash_map::Keys<'a, PropertyHandle, ValueContainer> {
         self.properties.keys()
     }
+
+    pub(crate) async fn set_plugin_ready(&mut self, id: u64) {
+        if let Some(p) = self.plugins.get_mut(&id) {
+            p.plugin_status = PluginStatus::Running;
+        } else {
+            // This should not happen... ever
+            panic!("A plugin was attempted to be set ready... that doesn't exist: {id}")
+        }
+
+        for (other_id, _) in self.plugins.iter().filter(|(k,p)| p.plugin_status == PluginStatus::Running && **k != id) {
+            // Inform plugin of ours running
+            self.send_message_to_plugin(*other_id, LoaderMessage::OtherPluginStartup(id)).await;
+
+            // Inform our plugin of the plugin that is already running
+            self.send_message_to_plugin(id, LoaderMessage::OtherPluginStartup(*other_id)).await;
+        }
+    }
 }
 
 pub(crate) struct Plugin {
     channel: AsyncSender<LoaderMessage>,
-    handle: *mut PluginHandle
+    handle: *mut PluginHandle,
+    plugin_status: PluginStatus
 }
 
 unsafe impl Send for Plugin {}
