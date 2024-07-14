@@ -5,7 +5,7 @@ use log::{debug, error};
 use serde::{Deserialize, Serialize};
 use socketioxide::{extract::{Data, SocketRef, State}, SocketIo};
 
-use crate::{utils::Value, PropertyHandle};
+use crate::{utils::{Value, ValueCache}, PropertyHandle};
 
 use super::utils::{DataStoreLocked, SocketChMsg, SocketDataRef};
 
@@ -78,7 +78,7 @@ const UPDATE_RATE: Duration = Duration::from_millis(10);
 type UpdatePackage = Vec<(PropertyHandle, Value)>;
 
 async fn update(io: SocketIo, datastore: SocketDataRef, rx: AsyncReceiver<SocketChMsg>) {
-    let mut props = HashMap::<PropertyHandle, (Value, Vec<String>)>::new();
+    let mut props = HashMap::<PropertyHandle, (ValueCache, Vec<String>)>::new();
     let mut cache = HashMap::<String, (UpdatePackage, usize)>::new();
 
     loop {
@@ -92,19 +92,22 @@ async fn update(io: SocketIo, datastore: SocketDataRef, rx: AsyncReceiver<Socket
 
         // Updating
         let ds_r = datastore.datastore.read().await;
-        for (handle, (value, dashes)) in props.iter_mut() {
-            let new_value = if let Some(cont) = ds_r.get_property_container(handle) {
-                cont.read_web()
+        for (handle, (value_cache, dashes)) in props.iter_mut() {
+            let new = if let Some(cont) = ds_r.get_property_container(handle) {
+                cont.read_web(value_cache)
             } else {
-                Value::None
+                if value_cache.value != Value::None {
+                    value_cache.value = Value::None;
+                    true
+                } else {
+                    false
+                }
             };
             
-            if *value != new_value {
-                *value = new_value;
-                
+            if new {
                 for d in dashes {
                     if let Some((list, _)) = cache.get_mut(d) {
-                        list.push((handle.clone(), value.clone()));
+                        list.push((handle.clone(), value_cache.value.clone()));
                     }
                 }
             }
@@ -132,7 +135,7 @@ async fn update(io: SocketIo, datastore: SocketDataRef, rx: AsyncReceiver<Socket
 async fn process_msg(
     msg: SocketChMsg,
     datastore: SocketDataRef,
-    props: &mut HashMap<PropertyHandle, (Value, Vec<String>)>,
+    props: &mut HashMap<PropertyHandle, (ValueCache, Vec<String>)>,
     cache: &mut HashMap<String, (UpdatePackage, usize)>
 ) {
     // debug!("Socket updater received message");
@@ -142,15 +145,15 @@ async fn process_msg(
                 let list = dash.list_properties();
 
                 for p in list {
-                    if let Some((value, dashes)) = props.get_mut(&p) {
-                        *value = Value::None; // Forces a refresh
+                    if let Some((value_cache, dashes)) = props.get_mut(&p) {
+                        *value_cache = ValueCache::default(); // Forces a refresh
                         
                         if !dashes.contains(&name) {
                             // Maybe another instance of this dashboard already subscribed to it
                             dashes.push(name.clone());
                         }
                     } else {
-                        props.insert(p, (Value::None, vec![name.clone()]));
+                        props.insert(p, (ValueCache::default(), vec![name.clone()]));
                     }
                 }
                 

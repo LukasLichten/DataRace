@@ -1,6 +1,6 @@
 use libc::c_char;
 use serde::{Deserialize, Serialize}; 
-use std::{ffi::{CStr, CString}, fmt::Debug, sync::{atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering}, Arc, RwLock}};
+use std::{ffi::{CStr, CString}, fmt::Debug, sync::{atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering}, Arc, RwLock}};
 use kanal::{Sender, Receiver};
 use highway::{HighwayHash, HighwayHasher, Key};
 
@@ -96,7 +96,7 @@ pub(crate) enum ValueContainer {
     Int(Arc<AtomicI64>),
     Float(Arc<AtomicU64>),
     Bool(Arc<AtomicBool>),
-    Str(Arc<RwLock<String>>),
+    Str(Arc<(RwLock<String>,AtomicUsize)>),
     Dur(Arc<AtomicI64>)
 }
 
@@ -152,7 +152,7 @@ impl ValueContainer {
                 at.store(b, SAVE_ORDERING);
                 true
             },
-            (PropertyType::Str, ValueContainer::Str(store)) => {
+            (PropertyType::Str, ValueContainer::Str(arc)) => {
                 let ptr = unsafe {
                     val.value.str
                 };
@@ -171,6 +171,8 @@ impl ValueContainer {
                     return false;
                 };
 
+                let (store, index) = (&arc.0, &arc.1);
+
                 let mut res = match store.write() {
                     Ok(res) => res,
                     Err(e) => {
@@ -179,6 +181,7 @@ impl ValueContainer {
                     }
                 };
                 *res = str;
+                index.fetch_add(1, Ordering::AcqRel);
                 drop(res);
 
                 false
@@ -252,7 +255,8 @@ impl ValueContainer {
                 sort: PropertyType::Boolean,
                 value: PropertyValue { boolean: at.load(READ_ORDERING) }
             },
-            ValueContainer::Str(store) => {
+            ValueContainer::Str(arc) => {
+                let store = &arc.0;
                 let res = match store.read() {
                     Ok(res) => {
                         res.clone()
@@ -285,13 +289,21 @@ impl ValueContainer {
         }
     }
 
-    pub(crate) fn read_web(&self) -> Value {
-        match self {
+    pub(crate) fn read_web(&self, cache: &mut ValueCache) -> bool {
+        let val = match self {
             ValueContainer::None => Value::None,
             ValueContainer::Int(at) => Value::Int(at.load(READ_ORDERING)),
-            ValueContainer::Float(at) => Value::Float(at.load(READ_ORDERING)),
+            ValueContainer::Float(at) => Value::Float(f64::from_be_bytes(at.load(READ_ORDERING).to_be_bytes())),
             ValueContainer::Bool(at) => Value::Bool(at.load(READ_ORDERING)),
-            ValueContainer::Str(store) => { 
+            ValueContainer::Str(arc) => {
+                let (store, index) = (&arc.0, arc.1.load(Ordering::Acquire));
+                
+                if let Some(old_index) = cache.version {
+                    if old_index == index {
+                        return false;
+                    }
+                }
+
                 let res = match store.read() {
                     Ok(res) => {
                         res.clone()
@@ -305,9 +317,19 @@ impl ValueContainer {
                         "".to_string()
                     }
                 };
-                Value::Str(res)
+                
+                cache.version = Some(index);
+                cache.value = Value::Str(res);
+                return true;
             },
             ValueContainer::Dur(at) => Value::Dur(at.load(READ_ORDERING)),
+        };
+
+        if cache.value == val {
+            false
+        } else {
+            cache.value = val;
+            true
         }
     }
 
@@ -327,11 +349,23 @@ impl ValueContainer {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ValueCache {
+    pub value: Value,
+    version: Option<usize>
+}
+
+impl Default for ValueCache {
+    fn default() -> Self {
+        ValueCache { value: Value::None, version: None }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub(crate) enum Value {
     None,
     Int(i64),
-    Float(u64),
+    Float(f64),
     Bool(bool),
     Str(String),
     Dur(i64)

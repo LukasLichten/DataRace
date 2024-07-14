@@ -146,7 +146,11 @@ impl Property {
             Property::Float(f) => sys::Property { sort: sys::PropertyType_Float, value: sys::PropertyValue { decimal: f } },
             Property::Bool(b) => sys::Property { sort: sys::PropertyType_Boolean, value: sys::PropertyValue { boolean: b } },
             Property::Str(s) => {
-                let c_str = CString::new(s).unwrap().into_raw();
+                // We need to insure our string does not contain null bytes, so we split on the
+                // first null byte and use that substring
+                let filtered = s.split(char::from(0)).next().expect("failed to convert string into CString");
+
+                let c_str = CString::new(filtered).expect("failed to convert string into CString").into_raw();
                 sys::Property { sort: sys::PropertyType_Str, value: sys::PropertyValue { str_: c_str } }
             },
             Property::Duration(d) => sys::Property { sort: sys::PropertyType_Duration, value: sys::PropertyValue { dur: d } },

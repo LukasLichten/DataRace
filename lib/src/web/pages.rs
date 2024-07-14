@@ -5,12 +5,13 @@ use log::error;
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 use tokio::fs::{self, DirEntry};
 
-use crate::utils::Value;
+use crate::utils::{Value, ValueCache};
 
 use super::{utils::DataStoreLocked, FsResourceError};
 
 use super::dashboard::*;
 
+#[allow(dead_code)]
 pub(super) async fn serve_asset(file: &str) -> PreEscaped<String> {
     let mut path = std::path::PathBuf::from_str("./lib/assets").unwrap();
     path.push(file);
@@ -152,8 +153,9 @@ pub(super) async fn properties(State(datastore): State<DataStoreLocked>) -> Mark
 
         for key in ds_r.iter_properties() {
             if let (Some(name),Some(cont)) = (ds_r.read_property_name(key),ds_r.get_property_container(key)) {
-                let value = cont.read_web();
-                let ouput = match value {
+                let mut cache = ValueCache::default();
+                cont.read_web(&mut cache);
+                let ouput = match cache.value {
                     Value::None => "None".to_string(),
                     Value::Int(i) => format!("Int: {}", i),
                     Value::Float(f) => format!("Float: {}", f),

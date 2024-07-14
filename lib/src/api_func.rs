@@ -1,5 +1,5 @@
 use libc::{c_char, c_void};
-use log::error;
+use log::{debug, error};
 
 use crate::{pluginloader::LoaderMessage, utils::{self, VoidPtrWrapper}, DataStoreReturnCode, Message, PluginDescription, PluginHandle, PluginNameHash, Property, PropertyHandle, ReturnValue, API_VERSION};
 
@@ -80,6 +80,7 @@ pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, 
 
     if let Some(prop_hash) = utils::generate_property_name_hash(msg.as_str()) {
         if prop_handle.property != prop_hash || prop_handle.plugin != han.id {
+            debug!("Create Property Failed due to name {}", msg);
             return DataStoreReturnCode::ParameterCorrupted;
         }
     } else {

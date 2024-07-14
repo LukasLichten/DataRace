@@ -36,6 +36,7 @@ pub(crate) async fn run_webserver(datastore: DataStoreLocked, shutdown: Arc<Atom
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn serve_page(asset: &str) -> maud::Markup {
     maud::html! {
         (pages::serve_asset(asset).await)
