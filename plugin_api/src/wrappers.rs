@@ -65,9 +65,126 @@ impl PartialEq for PropertyHandle {
     }
 }
 
-// User is required locking when acting with these, but forcing wrappers is just silly
+// User is required locking when acting with these, but forcing them to make wrappers is just silly
 unsafe impl Sync for PluginHandle {}
 unsafe impl Send for PluginHandle {}
+
+/// Handle to access values of a Property that is an array.
+///
+/// These handles are long lived, and will receive changes to values contained.
+/// However if the Property is resized or the type changed, then a new handle is required to be
+/// optained.
+#[derive(Debug)]
+pub struct ArrayHandle {
+    ptr: *mut sys::ArrayValueHandle
+}
+
+// All data within the ArrayHandle (which is effectivly a Arc wrapper for it) is synced
+unsafe impl Sync for ArrayHandle {}
+unsafe impl Send for ArrayHandle {}
+
+impl ArrayHandle {
+
+    /// Creates a new ArrayHandle with the size defined in `size`,
+    /// and type (and inital value) of `value`.
+    ///
+    /// The type and size can not be changed without creating a new array.
+    ///
+    /// The only permissable types are Int, Float, Bool, String and Duration.
+    /// None and Array will cause this function to fail, no array tp be created, and return None.
+    pub fn new(handle: &PluginHandle, value: Property, size: usize) -> Option<Self> {
+        let ptr = unsafe {
+            sys::create_array(handle.ptr, size, value.to_c())
+        };
+
+        if !ptr.is_null() {
+            Some(ArrayHandle { ptr })
+        } else {
+            None
+        }
+    }
+
+    /// Retrieves a value at a certain index.
+    ///
+    /// None if the index is out of bounds.
+    #[inline]
+    pub fn get(&self, index: usize) -> Option<Property> {
+        let raw_value = unsafe {
+            sys::get_array_value(self.ptr, index)
+        };
+
+        if raw_value.sort == sys::PropertyType_None {
+            None
+        } else {
+            Some(Property::new(raw_value))
+        }
+    }
+
+    /// Sets a value at a certain index
+    ///
+    /// It will fail if you:
+    /// - Lack write permission (NotAuthenticated)
+    /// - Out of Bounds (DoesNotExist)
+    /// - Different Datatype then used in the array (TypeMissmatch)
+    #[inline]
+    pub fn set(&self, handle: &PluginHandle, index: usize, value: Property) -> DataStoreReturnCode {
+        let res = DataStoreReturnCode::from(unsafe {
+            sys::set_array_value(handle.ptr, self.ptr, index, value.to_c())
+        });
+
+        res
+    }
+
+    /// Returns the size of the array
+    #[inline]
+    pub fn len(&self) -> usize {
+        unsafe {
+            sys::get_array_length(self.ptr)
+        }
+    }
+
+    /// Creates a Iterator for this array
+    pub fn iter<'a>(&'a self) -> ArrayIterator<'a> {
+        ArrayIterator { handle: self, index: 0 }
+    }
+}
+
+impl Drop for ArrayHandle {
+    fn drop(&mut self) {
+        unsafe {
+            // We could check for null pointers (aka values that got parse to_c()), but libdatarace does that too
+            sys::drop_array_handle(self.ptr);
+        }
+    }
+}
+
+impl Clone for ArrayHandle {
+    fn clone(&self) -> Self {
+        let ptr = unsafe {
+            sys::clone_array_handle(self.ptr)
+        };
+
+        Self { ptr }
+    }
+}
+
+/// Iterator over the ArrayHandle
+pub struct ArrayIterator<'a> {
+    handle: &'a ArrayHandle,
+    index: usize
+}
+
+impl Iterator for ArrayIterator<'_> {
+    type Item = Property;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self.handle.get(self.index);
+
+        self.index += 1;
+
+        item
+    }
+}
 
 /// Value of a Property
 /// This type is used for setting and getting Values
@@ -82,7 +199,8 @@ pub enum Property {
     Float(f64),
     Bool(bool),
     Str(String),
-    Duration(i64)
+    Duration(i64),
+    Array(ArrayHandle)
 }
 
 impl Property {
@@ -134,7 +252,14 @@ impl Property {
                 };
 
                 Property::Duration(val)
-            }
+            },
+            sys::PropertyType_Array => {
+                let ptr = unsafe {
+                    prop.value.arr
+                };
+
+                Property::Array(ArrayHandle { ptr })
+            },
             _ => Property::None
         }
     }
@@ -154,6 +279,22 @@ impl Property {
                 sys::Property { sort: sys::PropertyType_Str, value: sys::PropertyValue { str_: c_str } }
             },
             Property::Duration(d) => sys::Property { sort: sys::PropertyType_Duration, value: sys::PropertyValue { dur: d } },
+            Property::Array(mut arr) => {
+                let v = sys::Property { sort: sys::PropertyType_Array, value: sys::PropertyValue { arr: arr.ptr } };
+
+                // We replace the pointer with a null pointer,
+                // as due to to_c() consuming self the destructor is called on the ArrayHandle
+                // wrapper, resulting in the drop function calling drop_array_handle, when it
+                // already transfered ownership to the new owner, causing a double free.
+                //
+                // However changing the pointer will cause it to attempt to deallocate a null
+                // pointer, doing nothing besides cleaning up the wrapper
+                arr.ptr = std::ptr::null_mut();
+                drop(arr);
+
+
+                v
+            }
 
         }
     }
@@ -224,7 +365,25 @@ impl ToString for Property {
             Property::Float(f) => f.to_string(),
             Property::Bool(b) => b.to_string(),
             Property::Str(s) => s.clone(),
-            Property::Duration(d) => format!("{}us", d.to_string())
+            Property::Duration(d) => format!("{}us", d.to_string()),
+            Property::Array(arr) => {
+                let mut ouput = "[".to_string();
+
+                let mut iter = arr.iter();
+                while let Some(item) = iter.next() {
+                    if let Property::Str(text) = item {
+                        ouput = format!("{}\"{}\", ", ouput, text)
+                    } else {
+                        ouput = format!("{}{}, ", ouput, item.to_string())
+                    }
+                }
+
+                if let Some(pre) = ouput.strip_suffix(", ") {
+                    format!("{}]", pre)
+                } else {
+                    format!("{}]", ouput)
+                }
+            }
         }
     }
 }
@@ -318,6 +477,24 @@ impl From<std::time::Duration> for Property {
     /// If you want to define a negative duration, use `from_duration()`
     fn from(value: std::time::Duration) -> Self {
         Property::Duration(value.as_micros().try_into().expect("Why in the ever loving world did you need more then 580k years?"))
+    }
+}
+
+impl From<String> for Property {
+    fn from(value: String) -> Self {
+        Property::Str(value)
+    }
+}
+
+impl From<&str> for Property {
+    fn from(value: &str) -> Self {
+        Property::Str(value.to_string())
+    }
+}
+
+impl From<ArrayHandle> for Property {
+    fn from(value: ArrayHandle) -> Self {
+        Property::Array(value)
     }
 }
 

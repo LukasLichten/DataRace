@@ -1,4 +1,4 @@
-use std::mem::ManuallyDrop;
+use std::{mem::ManuallyDrop, sync::Arc};
 
 use libc::c_char;
 use crate::utils; 
@@ -159,7 +159,9 @@ pub enum PropertyType {
     Float = 2,
     Boolean = 3,
     Str = 4,
-    Duration = 5
+    Duration = 5,
+
+    Array = 10
 }
 
 /// This is a union, only one type is actually contained (read the PropertyType value first)
@@ -168,6 +170,7 @@ pub enum PropertyType {
 /// boolean is a Boolean
 /// str is a pointer to a null terminating String
 /// dur is a Duration in micro seconds (1s = 1,000millis = 1,000,000 micros), signed
+/// arr is a pointer to a ArrayValue
 #[repr(C)]
 pub union PropertyValue {
     pub integer: i64,
@@ -175,7 +178,21 @@ pub union PropertyValue {
     pub boolean: bool,
     // this is the reason to not support clone
     pub str: *mut c_char,
-    pub dur: i64
+    pub dur: i64,
+    pub arr: *mut ArrayValueHandle,
+}
+
+/// Handle to the array contained in a property.
+///
+/// These are long lived references, values retrieved are always up to date.
+/// Though They have a fixed size and type, so in case of change a new array has to be created,
+/// and a new handle has to be retrieved.
+///
+/// It is important to call `drop_array_handle` on a handle when it goes out of scope.
+/// You can produce a second handle to the same data via `clone_array_handle`.
+pub struct ArrayValueHandle {
+    pub(crate) arr: Arc<utils::ArrayValueContainer>,
+    pub(crate) allow_modify: bool
 }
 
 impl<T> ReturnValue<T> where T: Default {

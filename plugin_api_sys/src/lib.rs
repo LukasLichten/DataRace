@@ -13,6 +13,7 @@ pub use bindings::{log_info, log_error};
 
 // Property Functions
 pub use bindings::{create_property, update_property, get_property_value, generate_property_handle, delete_property, change_property_type, subscribe_property, unsubscribe_property};
+pub use bindings::{create_array, get_array_value, set_array_value, clone_array_handle, drop_array_handle, get_array_length, get_array_type};
 
 //Additional functions
 pub use bindings::deallocate_string;
@@ -27,7 +28,7 @@ pub use bindings::{lock_plugin, unlock_plugin};
 //Data
 // Enums
 pub use bindings::{DataStoreReturnCode, DataStoreReturnCode_Ok, DataStoreReturnCode_NotAuthenticated, DataStoreReturnCode_AlreadyExists, DataStoreReturnCode_DoesNotExist, DataStoreReturnCode_TypeMissmatch, DataStoreReturnCode_NotImplemented, DataStoreReturnCode_ParameterCorrupted, DataStoreReturnCode_DataCorrupted};
-pub use bindings::{PropertyType, PropertyType_None, PropertyType_Int, PropertyType_Float, PropertyType_Boolean, PropertyType_Str, PropertyType_Duration};
+pub use bindings::{PropertyType, PropertyType_None, PropertyType_Int, PropertyType_Float, PropertyType_Boolean, PropertyType_Str, PropertyType_Duration, PropertyType_Array};
 pub use bindings::{MessageType, MessageType_InternalMessage, MessageType_StartupFinished, MessageType_OtherPluginStarted, MessageType_PluginMessagePtr, MessageType_Lock, MessageType_Unlock, MessageType_Shutdown}; 
 
 // Message
@@ -36,7 +37,7 @@ pub use bindings::{UpdateValue, MessagePtr};
 pub use bindings::reenqueue_message;
 
 // Property
-pub use bindings::{Property, PropertyValue, PropertyHandle};
+pub use bindings::{Property, PropertyValue, PropertyHandle, ArrayValueHandle};
 
 // Plugins
 pub use bindings::{PluginHandle,PluginDescription};

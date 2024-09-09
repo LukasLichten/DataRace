@@ -65,7 +65,11 @@ impl PluginHandle {
     /// Updates the value of a property
     /// 
     /// You can only update propertys that were created with this handle
-    /// You can only use values of the same type as the inital type, call change_property_type to cahnge this
+    /// You can only use values of the same type as the inital type, call `change_property_type` to change this.
+    ///
+    /// Additionally Array types can not be updated through this function,
+    /// for regular updates use `get_property_value` to retireve the handle and then update using the handle,
+    /// for resizing/retyping use `change_property_type` with a new Array too
     pub fn update_property(&self, prop_handle: PropertyHandle, value: Property) -> DataStoreReturnCode {
         let res = unsafe {
             sys::update_property(self.get_ptr(), prop_handle.get_inner(), value.to_c())

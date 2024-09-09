@@ -46,28 +46,18 @@ fn handle_init(handle: PluginHandle) -> Result<PluginState,String> {
 
 
     match handle.create_property("Test", PROP_HANDLE, Property::Int(5)) {
-        DataStoreReturnCode::Ok => {
-            // let v = api::get_property_value(&handle, &prop_handle).unwrap();
-            // api::log_info(&handle, format!("{}", match v { Property::Int(i) => i.to_string(), _ => "NAN".to_string() }));
-        },
+        DataStoreReturnCode::Ok => (),
         e => handle.log_error(e)
     };
 
     handle.subscribe_property(PROP_HANDLE);
-    //
-    // api::update_property(&handle, &PROP_HANDLE, Property::Int(1));
 
-    // let v = api::get_property_value(&handle, &prop_handle).unwrap();
-    // api::log_info(&handle, format!("{}", match v { Property::Int(i) => i.to_string(), _ => "NAN".to_string() }));
-    //
-    // let code = api::delete_property(&handle, prop_handle);
-    // if code != DataStoreReturnCode::Ok {
-    //     api::log_error(&handle, code);
-    // } else {
-    //     api::log_info(&handle, "Property succesfully deleted");
-    // }
-
-    let _ = handle.create_property("extra", datarace_plugin_api::macros::generate_property_handle!("sample_plugin.extra"), Property::Str("We are number 1".to_string()));
+    let array = datarace_plugin_api::wrappers::ArrayHandle::new(&handle, Property::from(3), 3).unwrap();
+    array.set(&handle, 1, Property::from(2));
+    array.set(&handle, 2, Property::from(1));
+    // handle.log_info(Property::from(array.clone()).to_string());
+    
+    let _ = handle.create_property("extra", datarace_plugin_api::macros::generate_property_handle!("sample_plugin.extra"), Property::from(array));
 
     Ok(State { lock_count: std::sync::atomic::AtomicU64::default() })
     // Ok(())
@@ -88,6 +78,10 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
             
 
             handle.log_info("Startup finished");
+
+            if let Ok(extra) = handle.get_property_value(datarace_plugin_api::macros::generate_property_handle!("sample_plugin.extra")) {
+                handle.log_info(format!("Extra is: {}", extra.to_string()));
+            }
         },
         Message::OtherPluginStarted(id) => {
             // Informs us of the startup of another plugin

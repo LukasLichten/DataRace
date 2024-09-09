@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use libc::{c_char, c_void};
 use log::{debug, error};
 
-use crate::{pluginloader::LoaderMessage, utils::{self, VoidPtrWrapper}, DataStoreReturnCode, Message, PluginDescription, PluginHandle, PluginNameHash, Property, PropertyHandle, ReturnValue, API_VERSION};
+use crate::{pluginloader::LoaderMessage, utils::{self, VoidPtrWrapper}, ArrayValueHandle, DataStoreReturnCode, Message, PluginDescription, PluginHandle, PluginNameHash, Property, PropertyHandle, PropertyType, ReturnValue, API_VERSION};
 
 
 macro_rules! get_handle {
@@ -104,8 +106,13 @@ pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, 
 
 /// Updates the value for the Property behind a given handle
 /// 
-/// You can only use values of the same type as the inital value
-/// This method can NOT change the type, call change_property_type for this
+/// You can only use values of the same type as the inital value (except for arrays).
+/// This method can NOT change the type, call change_property_type for this.
+///
+/// Arrays can NOT be updated by passing in a new array, you can get the handle via get_property
+/// and update the individual values.
+/// If you can want to change the size or datatype you have to use change_property_type too.
+/// Passing in an Array will not deallocate that pointer.
 #[no_mangle]
 pub extern  "C" fn update_property(handle: *mut PluginHandle, prop_handle: PropertyHandle, value: Property) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
@@ -127,15 +134,17 @@ pub extern  "C" fn update_property(handle: *mut PluginHandle, prop_handle: Prope
 pub extern "C" fn get_property_value(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> ReturnValue<Property> {
     let han = get_handle_val!(handle);
 
-    ReturnValue::from(if let Some(store) = han.subscriptions.get(&prop_handle) {
-        Ok(store.read())
-    } else if prop_handle.plugin == han.id {
+    ReturnValue::from(if prop_handle.plugin == han.id {
         // Values we created are also accessible
         if let Some(cont) = han.properties.get(&prop_handle.property) {
             Ok(cont.read())
         } else {
             Err(DataStoreReturnCode::DoesNotExist)
         }
+    } else if let Some(store) = han.subscriptions.get(&prop_handle) {
+        // As we first checked for those we own, we can garantee we are not allowed to edit these
+        // This makes subscribing to you own properties pointless
+        Ok(store.read(false))
     } else {
         Err(DataStoreReturnCode::DoesNotExist)
     })
@@ -216,7 +225,7 @@ pub extern "C" fn change_property_type(handle: *mut PluginHandle, prop_handle: P
 pub extern "C" fn subscribe_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
-    // log::debug!("Hit subscribe");
+    // TODO: Remove ability to subscribe to your own properties, as it is pointless
     
     if let Err(e) = han.sender.send(LoaderMessage::Subscribe(prop_handle)) {
         error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
@@ -319,6 +328,137 @@ pub extern "C" fn save_state_now(handle: *mut PluginHandle, state: *mut c_void) 
     }
     han.unlock();
 }
+
+/// Gets a Value at a certain index in this array.
+///
+/// If the index is out of bounds returns a Property with Type None
+#[no_mangle]
+pub extern "C" fn get_array_value(array_handle: *mut ArrayValueHandle, index: usize) -> Property {
+    let arr = if let Some(arr) = unsafe {
+        array_handle.as_ref()  
+    } {
+        arr
+    } else {
+        return Property::default();
+    };
+
+    arr.arr.read(index)
+}
+
+/// Sets the Value at a certain index of an array.
+///
+/// This value must be the same type as all other values in the array.
+/// If you intend to change this (or resize the array) you need to replace the array.
+///
+/// You can only edit arrays you created.
+/// Trying to change value in Arrayhandles from properties of other plugin will return NotAuthenticated
+#[no_mangle]
+pub extern "C" fn set_array_value(handle: *mut PluginHandle, array_handle: *mut ArrayValueHandle, index: usize, value: Property) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let arr = if let Some(arr) = unsafe {
+        array_handle.as_ref()  
+    } {
+        arr
+    } else {
+        return DataStoreReturnCode::ParameterCorrupted;
+    };
+
+    if arr.allow_modify {
+        arr.arr.write(index, value, han)
+    } else {
+        DataStoreReturnCode::NotAuthenticated
+    }
+}
+
+/// Returns the length of the array
+#[no_mangle]
+pub extern "C" fn get_array_length(array_handle: *mut ArrayValueHandle) -> usize {
+    let arr = if let Some(arr) = unsafe {
+        array_handle.as_ref()  
+    } {
+        arr
+    } else {
+        return 0;
+    };
+
+    arr.arr.length()
+}
+
+/// Returns the type for the data stored in the array
+#[no_mangle]
+pub extern "C" fn get_array_type(array_handle: *mut ArrayValueHandle) -> PropertyType {
+    let arr = if let Some(arr) = unsafe {
+        array_handle.as_ref()  
+    } {
+        arr
+    } else {
+        return PropertyType::None;
+    };
+
+    arr.arr.get_type()
+}
+
+/// Creates a new Array and returns it's handle.
+///
+/// Only Int, Float, Bool, String, Duration are accepted as types, others will fail.
+/// This function will return null on fail.
+///
+/// Size and type can not be changed later.
+/// Additionally you can not index into this array like a regular C array(as it is a wrapper around
+/// a reference counted object), use `set_array_value` and `get_array_value` respectivly.
+///
+/// When putting this ArrayHandle into a Property and sending it off to `create_property` or `change_property_type`
+/// then this pointer is consumed, you should call `clone_array_handle` first (or get the new
+/// handle from the property).
+///
+/// When the handle goes out of scope make sure to call `drop_array_handle`, this will only
+/// deallocate if you were the last holding it.
+#[no_mangle]
+pub extern "C" fn create_array(handle: *mut PluginHandle, size: usize, init_value: Property) -> *mut ArrayValueHandle {
+    let han = get_handle!(handle, std::ptr::null_mut());
+
+    if let Some(arr) = utils::ArrayValueContainer::new(size, init_value, han) {
+        let arr_handle = ArrayValueHandle { arr: Arc::new(arr), allow_modify: true };
+
+        Box::into_raw(Box::new(arr_handle))
+    } else {
+        std::ptr::null_mut()
+    }
+}
+
+/// Dublicates the array handle (without deallocating the passed in handle).
+///
+/// These two handles access the same array.
+/// Useful for parallel execution.
+///
+/// Be aware to call `drop_array_handle` precisely once on each handle
+#[no_mangle]
+pub extern "C" fn clone_array_handle(array_handle: *mut ArrayValueHandle) -> *mut ArrayValueHandle {
+    let arr = if let Some(arr) = unsafe {
+        array_handle.as_ref()  
+    } {
+        arr
+    } else {
+        return std::ptr::null_mut()
+    };
+
+    let dub = ArrayValueHandle { arr: arr.arr.clone(), allow_modify: arr.allow_modify.clone() };
+    Box::into_raw(Box::new(dub))
+}
+
+/// Drops the passed in ArrayHandle.
+///
+/// This does not necessarily drop the array, only if this was the last handle holding it (and no property is holding it)
+#[no_mangle]
+pub extern "C" fn drop_array_handle(array_handle: *mut ArrayValueHandle) {
+    if !array_handle.is_null() {
+        unsafe {
+            array_handle.drop_in_place()
+        }
+    }
+}
+
+
 
 /// Sends a message to the update function of your plugin.  
 /// This type of internal message is useful for sending messages from worker threads, for example

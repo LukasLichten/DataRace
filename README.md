@@ -16,7 +16,8 @@ or talk to the Socket.io api instead.
   
 In Progess:  
 - Implement socket.io server
-- Build dashboard rendering and editor
+- Build dashboard rendering
+- Script Engine
   
 *Far future*:
 - cmd/env args, config files
