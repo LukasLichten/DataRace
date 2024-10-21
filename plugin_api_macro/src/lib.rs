@@ -5,6 +5,7 @@ use syn::{parse::{Parse, ParseStream}, parse_macro_input, Ident, LitInt, LitStr,
 mod attr;
 
 /// Add this the function you want to handle the plugin init.  
+/// 
 /// This function requires to take the PluginHandle as parameter,
 /// return type has to be Result<PluginState, String> or Result<(), String>.  
 ///   
@@ -26,6 +27,7 @@ pub fn plugin_init(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Add this the function you want to handle the plugin update.  
+///
 /// This function requires to take the PluginHandle and Message as parameters,
 /// return type has to be Result<(), String>.  
 ///   
@@ -66,7 +68,8 @@ impl Parse for DescriptorTokens {
     }
 }
 
-/// Generates the get_plugin_description function REQUIERED for your plugin <br>
+/// Generates the get_plugin_description function REQUIERED for your plugin
+///
 /// Pass in the name of your plugin, version major, version minor, version patch
 /// You have to pass in literals
 ///
@@ -117,9 +120,10 @@ pub extern "C" fn get_plugin_description() -> datarace_plugin_api::reexport::Plu
     }.into_token_stream().into()
 }
 
-/// Generates the free_string function REQUIRED for your plugin <br>
-/// Purpose of this function is to deallocate strings allocated by this plugin <br>
-/// This standard definition should be sufficient for most use-cases
+/// Generates the free_string function REQUIRED for your plugin.
+///
+/// Purpose of this function is to deallocate strings allocated by this plugin.
+/// This standard definition should be sufficient for most use-cases.
 #[proc_macro]
 pub fn free_string_fn(_input: TokenStream) -> TokenStream {
     quote! {
@@ -141,11 +145,11 @@ pub extern "C" fn free_string(ptr: *mut std::os::raw::c_char) {
 /// This is perfect for propertys with static values, as this cuts the need of sending a cstring
 /// and the api hashing it during runtime.
 /// But if you need dynamics, the function by the same name is a better choice (and you can store
-/// the results of that one too)
+/// the handle of that one too)
 ///
 /// Property names are not case sensitive, have to contain at least one dot, with the first dot
 /// deliminating between plugin and property (but the property part can contain further dots).
-/// You can not have any leading or trailing dots
+/// You can not have any leading or trailing dots.
 #[proc_macro]
 pub fn generate_property_handle(input: TokenStream) -> TokenStream {
     let name = parse_macro_input!(input as LitStr);
@@ -172,6 +176,47 @@ pub fn generate_property_handle(input: TokenStream) -> TokenStream {
     quote! {
         unsafe {
             datarace_plugin_api::wrappers::PropertyHandle::from_values(#id, #prop)
+        }
+    }.into_token_stream().into()
+}
+
+/// Generates a event handle at compiletime
+/// It will insert a EventHandle in this place
+///
+/// This is perfect for events with static values, as this cuts the need of sending a cstring
+/// and the api hashing it during runtime.
+/// But if you need dynamics, the function by the same name is a better choice (and you can store
+/// the handle of that one too).
+///
+/// Event names are not case sensitive, have to contain at least one dot, with the first dot
+/// deliminating between plugin and event (but the event part can contain further dots).
+/// You can not have any leading or trailing dots.
+#[proc_macro]
+pub fn generate_event_handle(input: TokenStream) -> TokenStream {
+    let name = parse_macro_input!(input as LitStr);
+
+    let name_val = name.value();
+    let handle = unsafe {
+        let ptr = std::ffi::CString::new(name_val).expect("name can not be converted into CString").into_raw();
+        let res = datarace_plugin_api_sys::generate_event_handle(ptr);
+
+        drop(std::ffi::CString::from_raw(ptr));
+
+        if res.code != datarace_plugin_api_sys::DataStoreReturnCode_Ok {
+            return quote_spanned! {
+                name.span() => compile_error!("invalid name")
+            }.into_token_stream().into();
+        }
+
+        res.value
+    };
+
+    let id = handle.plugin;
+    let ev = handle.event;
+
+    quote! {
+        unsafe {
+            datarace_plugin_api::wrappers::EventHandle::from_values(#id, #ev)
         }
     }.into_token_stream().into()
 }

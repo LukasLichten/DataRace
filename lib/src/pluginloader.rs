@@ -6,14 +6,14 @@ use log::{error, info, debug};
 
 use tokio::task::JoinSet;
 
-use crate::{api_types, datastore::DataStore, utils::{self, VoidPtrWrapper}, DataStoreReturnCode, Message, MessagePtr, MessageType, MessageValue, PluginHandle, PropertyHandle};
+use crate::{api_types, datastore::DataStore, events::EventMessage, utils::{self, VoidPtrWrapper}, DataStoreReturnCode, EventHandle, Message, MessagePtr, MessageType, MessageValue, PluginHandle, PropertyHandle};
 
 
 
 pub(crate) async fn load_all_plugins(datastore: &'static tokio::sync::RwLock<DataStore>) -> Result<JoinSet<Result<(),String>>,Box<dyn std::error::Error>> {
-    let plugin_folder = {
+    let (plugin_folder, event_channel) = {
         let ds_r = datastore.read().await;
-        ds_r.get_config().get_plugin_folder()
+        (ds_r.get_config().get_plugin_folder(), ds_r.get_event_channel())
     };
 
     if !plugin_folder.is_dir() {
@@ -38,7 +38,8 @@ pub(crate) async fn load_all_plugins(datastore: &'static tokio::sync::RwLock<Dat
         while let Some(Ok(item)) = res.next() {
             debug!("Found {} in plugin folder", item.path().to_str().unwrap());
             if item.path().extension().unwrap().to_str().unwrap() == ending {
-                plugin_task_handles.spawn(run_plugin(item.path(), datastore));
+                let event_c = event_channel.clone();
+                plugin_task_handles.spawn(run_plugin(item.path(), datastore, event_c));
             }
         }
 
@@ -48,7 +49,7 @@ pub(crate) async fn load_all_plugins(datastore: &'static tokio::sync::RwLock<Dat
     Ok(plugin_task_handles)
 }
 
-async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataStore>) -> Result<(), String> {
+async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataStore>, event_channel: kanal::Sender<EventMessage>) -> Result<(), String> {
     if let Ok(wrapper) = unsafe { Container::<PluginWrapper>::load(path.to_str().unwrap()) } {
         // Preperations
         let desc = wrapper.get_plugin_description();
@@ -88,7 +89,7 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
 
         // Creates PluginHandle
         let (sender, receiver) = utils::get_message_channel();
-        let handle = PluginHandle::new(name, id, datastore, sender.clone(), wrapper.free_string.clone(), desc.version);
+        let handle = PluginHandle::new(name, id, datastore, sender.clone(), wrapper.free_string.clone(), desc.version, event_channel);
         let mut ptr_h = PtrWrapper { ptr: Box::into_raw(Box::new(handle)), is_locked: false, subscribers: HashMap::default() };
         drop(desc); // drop is importantent, name ptr is pointing at freed memory
 
@@ -165,7 +166,13 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
                     send_plugin_message(&ptr_h, target, LoaderMessage::PluginMessagePtr((id, ptr, reason))).await.map(|okay| if !okay {
                         error!("Plugin {} failed to send message with ptr to plugin {}", get_plugin_name(&ptr_h), target);
                     })
-                }
+                },
+
+                LoaderMessage::EventTriggered(ev) => send_simple_message(&wrapper, &mut ptr_h,
+                    Message { sort: MessageType::EventTriggered, value: MessageValue { event: ev } }, "Failed to pass in event trigger"),
+                LoaderMessage::EventUnsubscribed(ev) => send_simple_message(&wrapper, &mut ptr_h,
+                    Message { sort: MessageType::EventUnsubscribed, value: MessageValue { event: ev } }, "Failed to inform of event unsubscribe"),
+                
 
                 // LoaderMessage::Update(prop_handle, value) => {
                 //     let msg = LoaderMessage::Update(prop_handle, value);
@@ -266,6 +273,9 @@ pub(crate) enum LoaderMessage {
     SendPluginMessagePtr((u64, VoidPtrWrapper, i64)),
     PluginMessagePtr((u64, VoidPtrWrapper, i64)),
     OtherPluginStartup(u64),
+
+    EventTriggered(EventHandle),
+    EventUnsubscribed(EventHandle),
     
 
     // Update(PropertyHandle, Value),

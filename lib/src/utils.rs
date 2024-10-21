@@ -727,3 +727,19 @@ pub(crate) fn generate_property_name_hash(str: &str) -> Option<u64> {
 
     Some(hasher.finalize64())
 }
+
+const HASH_KEY_EVENT:Key = Key([256,432,1024,512]);
+
+/// Serves to generate hashes for the name of a plugin
+pub(crate) fn generate_event_name_hash(str: &str) -> Option<u64> {
+    if str.strip_suffix('.').is_some() || str.strip_prefix('.').is_some() {
+        return None;
+    }
+    let str = str.to_lowercase();
+
+    let mut hasher = HighwayHasher::new(HASH_KEY_EVENT);
+
+    hasher.append(str.as_bytes());
+
+    Some(hasher.finalize64())
+}

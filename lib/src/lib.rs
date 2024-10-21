@@ -13,6 +13,8 @@ mod datastore;
 
 mod web;
 
+mod events;
+
 mod pluginloader;
 pub(crate) mod utils;
 
@@ -23,6 +25,10 @@ static mut IS_RUNTIME: bool = false;
 #[no_mangle]
 pub extern "C" fn run() {
     unsafe {
+        if IS_RUNTIME {
+            return;
+        }
+
         IS_RUNTIME = true;
     }
 
@@ -48,7 +54,9 @@ pub extern "C" fn run() {
 
 async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
     info!("Launching DataRace version {}.{}.{} (apiversion: {})...", built_info::PKG_VERSION_MAJOR, built_info::PKG_VERSION_MINOR, built_info::PKG_VERSION_PATCH, API_VERSION);
-    let datastore: &'static tokio::sync::RwLock<datastore::DataStore>  = Box::leak(Box::new(datastore::DataStore::new()));
+
+    let (event_loop, event_channel) = events::create_event_task();
+    let datastore: &'static tokio::sync::RwLock<datastore::DataStore>  = Box::leak(Box::new(datastore::DataStore::new(event_channel)));
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let sh_clone = shutdown.clone();
@@ -95,6 +103,7 @@ async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
 
     // Stops the Runtime from closing when plugins are still running
     let _ = handle.await;
+    let _ = event_loop.await;
 
     Ok(())
 }

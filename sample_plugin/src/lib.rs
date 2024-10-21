@@ -1,4 +1,4 @@
-use datarace_plugin_api::wrappers::{DataStoreReturnCode, Message, PluginHandle, Property, PropertyHandle};
+use datarace_plugin_api::wrappers::{DataStoreReturnCode, EventHandle, Message, PluginHandle, Property, PropertyHandle};
 
 pub(crate) type PluginState = State;
 
@@ -9,16 +9,10 @@ datarace_plugin_api::macros::free_string_fn!();
 // You have to pass in literals (at least so far, unfortunatly)
 datarace_plugin_api::macros::plugin_descriptor_fn!("sample_plugin", 0, 1, 0);
 
-// This generates the extern funcs, while also wrapping the types
-// you pass in the two function names that handle init and update
-// Optionally you pass in the statetype as the third value, which you will have to return out of
-// the init handle function (which will then be stored into the state)
-// But if you don't want the state automatically saved, you can save parse a boolean in as a forth
-// value and turn it off (ideal if you want to spin up a worker thread in the init function)
-// datarace_plugin_api::macros::generate_funcs!(handle_init, handle_update, PluginState);
-
+// You can generate handles at compile time, and store them in constants for cheaper access.
+// This includes properties of other plugins
 const PROP_HANDLE: PropertyHandle = datarace_plugin_api::macros::generate_property_handle!("sample_plugin.Test");
-
+const EVENT_HANLDE: EventHandle = datarace_plugin_api::macros::generate_event_handle!("sample_plugin.event");
 
 // Allows you to store data between invocations
 pub(crate) struct State {
@@ -38,6 +32,8 @@ pub(crate) struct State {
 fn handle_init(handle: PluginHandle) -> Result<PluginState,String> {
     let prop_name = "sample_plugin.Test";
     
+    // Or you can generate them at runtime, but this requires allocation and time to hash,
+    // so use it only for dynamic properties, and store them for future use (idealy)
     let runtime_prop_handle = datarace_plugin_api::api::generate_property_handle(prop_name).unwrap();
     let compiled_prop_handle = datarace_plugin_api::macros::generate_property_handle!(" sample_plugin.test");
 
@@ -59,6 +55,10 @@ fn handle_init(handle: PluginHandle) -> Result<PluginState,String> {
     
     let _ = handle.create_property("extra", datarace_plugin_api::macros::generate_property_handle!("sample_plugin.extra"), Property::from(array));
 
+    let ev = datarace_plugin_api::api::generate_event_handle("sample_plugin.event").unwrap();
+    handle.create_event(ev);
+    handle.subscribe_event(ev);
+
     Ok(State { lock_count: std::sync::atomic::AtomicU64::default() })
     // Ok(())
 }
@@ -70,11 +70,14 @@ fn handle_init(handle: PluginHandle) -> Result<PluginState,String> {
 // Returning Err will shutdown the plugin
 #[datarace_plugin_api::macros::plugin_update]
 fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
+
     match msg {
         Message::StartupFinished => {
             // This triggers after all init related Messages are processed, a good indication that
             // all properties have been created.
             // Can be used to spin up worker threads
+
+            handle.trigger_event(EVENT_HANLDE);
             
 
             handle.log_info("Startup finished");
@@ -189,6 +192,25 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
             
             let _ = (origin, ptr, reason); // Technically a memory leak, but who cares
         },
+        Message::EventTriggered(ev) => {
+            if ev == EVENT_HANLDE {
+                handle.log_info("We received our sample event");
+
+                // handle.delete_event(event);
+                handle.unsubscribe_event(EVENT_HANLDE);
+            } else {
+                handle.log_info("Unknown Event received OwO");
+            }
+        },
+        Message::EventUnsubscribed(ev) => {
+            if ev == EVENT_HANLDE {
+                handle.log_info("Unsubscribbed from our event successfully");
+            } else {
+                handle.log_info("Unknown Event unsubscribed OwO");
+            }
+        }
+
+
         Message::Unknown => {
             // Fallback, for when the plugin is used with a newer version of libdatarace with more
             // message types

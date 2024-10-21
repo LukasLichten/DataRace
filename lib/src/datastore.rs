@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 use kanal::{AsyncSender, Sender};
 use hashbrown::HashMap;
 
-use crate::{pluginloader::LoaderMessage, utils::{PluginStatus, ValueContainer}, DataStoreReturnCode, PluginHandle, PropertyHandle};
+use crate::{events::EventMessage, pluginloader::LoaderMessage, utils::{PluginStatus, ValueContainer}, DataStoreReturnCode, PluginHandle, PropertyHandle};
 
 /// This is our centralized State
 pub(crate) struct DataStore {
@@ -15,20 +15,26 @@ pub(crate) struct DataStore {
     properties: HashMap<PropertyHandle, ValueContainer>,
     // As the hash is not reversible, but for certain opertations we need the name...
     prop_names: HashMap<PropertyHandle, String>,
+    
     config: Config,
+    
     // task_map: HashMap<tokio::task::Id, (u64, String)>,
-    shutdown: bool
+    
+    shutdown: bool,
+
+    event_channel: kanal::Sender<EventMessage>
 }
 
 impl DataStore {
-    pub fn new() -> RwLock<DataStore> {
+    pub fn new(event_channel: kanal::Sender<EventMessage>) -> RwLock<DataStore> {
         RwLock::new(DataStore {
             plugins: HashMap::default(),
             properties: HashMap::default(),
             prop_names: HashMap::default(),
             config: Config::default(),
             // task_map: HashMap::default(),
-            shutdown: false
+            shutdown: false,
+            event_channel
         })
     }
 
@@ -69,6 +75,8 @@ impl DataStore {
             // so they won't be available to the web endpoint anymore
             self.properties.retain(|&k, _| k.plugin != id );
 
+            let _ = self.event_channel.as_async().send(EventMessage::RemovePlugin(id));
+
             // TODO send a message to all other plugins so they can remove leftover
             // properties/subscriptions from
             // this plugin
@@ -79,6 +87,10 @@ impl DataStore {
         }
 
     } 
+
+    pub(crate) fn get_event_channel(&self) -> Sender<EventMessage> {
+        self.event_channel.clone()
+    }
 
     pub(crate) fn count_plugins(&self) -> usize {
         self.plugins.iter().filter(|(_,p)|p.plugin_status == PluginStatus::Running).count()
@@ -91,6 +103,8 @@ impl DataStore {
         for (_,plugin) in self.plugins.iter() {
             let _ = plugin.channel.send(LoaderMessage::Shutdown).await;
         }
+
+        let _ = self.event_channel.as_async().send(EventMessage::Shutdown).await;
     }
 
     pub(crate) fn get_shutdown_status(&self) -> bool {

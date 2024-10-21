@@ -35,6 +35,10 @@ impl PluginHandle {
     }
 }
 
+// User is required locking when acting with these, but forcing them to make wrappers is just silly
+unsafe impl Sync for PluginHandle {}
+unsafe impl Send for PluginHandle {}
+
 /// A Handle for accessing Property used when writing, reading and subscribing
 #[derive(Debug, Clone, Copy)]
 pub struct PropertyHandle {
@@ -65,9 +69,36 @@ impl PartialEq for PropertyHandle {
     }
 }
 
-// User is required locking when acting with these, but forcing them to make wrappers is just silly
-unsafe impl Sync for PluginHandle {}
-unsafe impl Send for PluginHandle {}
+/// The handle for an Event, for creating, triggering, subscribing, unsubscribing and identifying
+#[derive(Debug, Clone, Copy)]
+pub struct EventHandle {
+    inner: sys::EventHandle
+}
+
+impl EventHandle {
+    pub(crate) fn new(handle: sys::EventHandle) -> Self {
+        EventHandle { inner: handle }
+    }
+
+    pub(crate) fn get_inner(&self) -> sys::EventHandle {
+        self.inner
+    }
+
+    /// This is used by Macros in their generated Code allowing them to write down the values
+    /// generated during compiletime.
+    /// This does not serve any further purpose, and should not be used by you
+    #[inline]
+    pub const unsafe fn from_values(plugin_hash: u64, event_hash: u64) -> Self {
+        EventHandle { inner: sys::EventHandle { plugin: plugin_hash, event: event_hash } }
+    }
+}
+
+impl PartialEq for EventHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.get_inner().plugin == other.get_inner().plugin &&
+            self.get_inner().event == other.get_inner().event
+    }
+}
 
 /// Handle to access values of a Property that is an array.
 ///
@@ -564,12 +595,16 @@ impl Display for DataStoreReturnCode {
 pub enum Message {
     Lock,
     Unlock,
+
     Shutdown,
     StartupFinished,
     OtherPluginStarted(u64),
+    
     InternalMsg(i64),
     PluginMessagePtr{origin: u64, ptr: *mut c_void, reason: i64 },
 
+    EventTriggered(EventHandle),
+    EventUnsubscribed(EventHandle),
 
     // Update(PropertyHandle, Property),
     // Remove(PropertyHandle),
@@ -598,6 +633,22 @@ impl From<sys::Message> for Message {
                 
                 Message::PluginMessagePtr { origin: val.origin, ptr: val.message_ptr, reason: val.reason }
             },
+
+            sys::MessageType_EventTriggered => {
+                let val = unsafe {
+                    value.value.event
+                };
+
+                Message::EventTriggered(EventHandle::new(val))
+            },
+            sys::MessageType_EventUnsubscribed => {
+                let val = unsafe {
+                    value.value.event
+                };
+
+                Message::EventUnsubscribed(EventHandle::new(val))
+            },
+
 
             // sys::MessageType_Update => {
             //     unsafe {

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use libc::{c_char, c_void};
 use log::{debug, error};
 
-use crate::{pluginloader::LoaderMessage, utils::{self, VoidPtrWrapper}, ArrayValueHandle, DataStoreReturnCode, Message, PluginDescription, PluginHandle, PluginNameHash, Property, PropertyHandle, PropertyType, ReturnValue, API_VERSION};
+use crate::{events::EventMessage, pluginloader::LoaderMessage, utils::{self, VoidPtrWrapper}, ArrayValueHandle, DataStoreReturnCode, EventHandle, Message, PluginDescription, PluginHandle, PluginNameHash, Property, PropertyHandle, PropertyType, ReturnValue, API_VERSION};
 
 
 macro_rules! get_handle {
@@ -152,13 +152,17 @@ pub extern "C" fn get_property_value(handle: *mut PluginHandle, prop_handle: Pro
 
 /// Generates the PropertyHandle for a certain name
 /// 
-/// Similar to create_property, it is your job to deallocate the nullterminating string
-/// It is advisable to generate these PropertyHandles at Compile time where possible to avoid
+/// It is advisable to generate these PropertyHandles at Compile time (macro etc) where possible to avoid
 /// having to allocate and deallocate a string.
 ///
-/// It is a good idea to use compile time macros (if your language supports them) to generate the
-/// handles during compiletime. This allows to cut down on runtime overhead from calling this
-/// function (and other overhead from having to allocate memory to do so too)
+/// Name convention is:
+/// - At least one dot
+/// - Anything ahead of the first dot is the plugin name
+/// - Plugin name can not be empty
+/// - Case insensitive
+/// - More dots can be used
+///
+/// Similar to create_property, it is your job to deallocate the nullterminating string
 #[no_mangle]
 pub extern "C" fn generate_property_handle(name: *mut c_char) -> ReturnValue<PropertyHandle> {
     let msg = get_string!(name);
@@ -253,6 +257,140 @@ pub extern "C" fn unsubscribe_property(handle: *mut PluginHandle, prop_handle: P
         DataStoreReturnCode::DataCorrupted
     } else {
         DataStoreReturnCode::Ok
+    }
+}
+
+/// Generates the EventHandle for a certain name
+/// 
+/// It is advisable to generate these EventHandles at Compile time (macro etc) where possible to avoid
+/// having to allocate and deallocate a string.
+///
+/// Name convention is:
+/// - At least one dot
+/// - Anything ahead of the first dot is the plugin name
+/// - Plugin name can not be empty
+/// - Case insensitive
+/// - More dots can be used
+///
+/// Similar to create_property, it is your job to deallocate the nullterminating string
+#[no_mangle]
+pub extern "C" fn generate_event_handle(name: *mut c_char) -> ReturnValue<EventHandle> {
+    let msg = get_string!(name);
+    
+    ReturnValue::from(
+        EventHandle::new(msg.as_str())
+        .ok_or(DataStoreReturnCode::ParameterCorrupted)
+    )
+}
+
+
+/// Creates a new Event (if it doesn't exists already).
+///
+/// This is done by sending a message to the event loop, so we don't know if the event already
+/// exists, and it may take time to be created.
+/// Also you can only create events from your plugin.
+///
+/// But as all Event related calls go through the event loop it is guaranteed that the event
+/// exists for any trigger calls following this function
+#[no_mangle]
+pub extern "C" fn create_event(handle: *mut PluginHandle, event: EventHandle) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+
+    if han.id != event.plugin {
+        return DataStoreReturnCode::NotAuthenticated;
+    }
+
+    if han.event_channel.send(EventMessage::Create(event)).is_ok() {
+        DataStoreReturnCode::Ok
+    } else {
+        DataStoreReturnCode::DataCorrupted
+    }
+}
+
+/// Deletes a Event.
+///
+/// This is done by sending a message to the event loop, so we don't know if the event even
+/// existed, and it may take time to execute.
+/// Also you can only delete events from your plugin.
+///
+/// But as all Event related calls go through the event loop it is guaranteed that the event
+/// will not exist for any event related calls after this function
+#[no_mangle]
+pub extern "C" fn delete_event(handle: *mut PluginHandle, event: EventHandle) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+
+    if han.id != event.plugin {
+        return DataStoreReturnCode::NotAuthenticated;
+    }
+
+    if han.event_channel.send(EventMessage::Remove(event)).is_ok() {
+        DataStoreReturnCode::Ok
+    } else {
+        DataStoreReturnCode::DataCorrupted
+    }
+}
+
+/// Subscribes to an event
+///
+/// This is done by sending a message to the event loop, so we don't know if the event even
+/// exists, and it may take time to execute.
+///
+/// If an event does not exist, then it will bookmark it, and automatically subscribe it once the
+/// plugin finally creates it.
+/// If that plugin is shut down before creation, then you are still notfied of unsubscription 
+/// (this is only for plugins shutdown after this function call, excluding plugin shutdown caused by datarace shutting down in general).
+///
+/// It is possible that the first triggering of the event is already queued, then this subscription
+/// will miss the first trigger.
+#[no_mangle]
+pub extern "C" fn subscribe_event(handle: *mut PluginHandle, event: EventHandle) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+
+    if han.event_channel.send(EventMessage::Subscribe(event, han.id, han.sender.clone().to_async())).is_ok() {
+        DataStoreReturnCode::Ok
+    } else {
+        DataStoreReturnCode::DataCorrupted
+    }
+}
+
+/// Unsubscribes to an event
+///
+/// This is done by sending a message to the event loop, so we don't know if the event even
+/// exists (or if we were even subscribed to it), and it may take time to execute.
+///
+/// As such you may see some more events that where queued before this unsubscription. 
+///
+/// You will be notified when the unsubscribe is complete, but only if the event existed (and you
+/// were subscribed).
+#[no_mangle]
+pub extern "C" fn unsubscribe_event(handle: *mut PluginHandle, event: EventHandle) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+
+    if han.event_channel.send(EventMessage::Unsubscribe(event, han.id)).is_ok() {
+        DataStoreReturnCode::Ok
+    } else {
+        DataStoreReturnCode::DataCorrupted
+    }
+}
+
+/// Triggers an event
+///
+/// It sends a message to the event loop, so there is no confirmation that your event exists.
+///
+/// While there can be delays befor execution, but creation/deletion/other trigger calls are
+/// guaranteed to not be reordered
+#[no_mangle]
+pub extern "C" fn trigger_event(handle: *mut PluginHandle, event: EventHandle) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+
+    if han.id != event.plugin {
+        return DataStoreReturnCode::NotAuthenticated;
+    }
+
+    if han.event_channel.send(EventMessage::Trigger(event)).is_ok() {
+        DataStoreReturnCode::Ok
+    } else {
+        DataStoreReturnCode::DataCorrupted
     }
 }
 

@@ -16,6 +16,7 @@ pub struct PluginHandle {
     pub(crate) state_ptr: *mut libc::c_void,
     free_string: extern "C" fn(ptr: *mut libc::c_char),
     lock: std::sync::atomic::AtomicU32,
+    pub(crate) event_channel: kanal::Sender<crate::events::EventMessage>
 }
 
 impl PluginHandle {
@@ -24,7 +25,8 @@ impl PluginHandle {
         datastore: &'static tokio::sync::RwLock<crate::datastore::DataStore>,
         sender: kanal::Sender<crate::pluginloader::LoaderMessage>,
         free_string: extern "C" fn(ptr: *mut libc::c_char),
-        version: [u16;3]
+        version: [u16;3],
+        event_channel: kanal::Sender<crate::events::EventMessage>
     ) -> PluginHandle {
         PluginHandle {
             name,
@@ -37,6 +39,7 @@ impl PluginHandle {
             version,
             lock: std::sync::atomic::AtomicU32::new(0),
             state_ptr: std::ptr::null_mut(),
+            event_channel
         }
     }
 
@@ -95,7 +98,8 @@ pub struct PluginDescription {
 }
 
 /// Return Value for an API function
-/// Only if the ReturnCode is OK (aka 0), then the value is defined
+///
+/// Only if the ReturnCode is OK (aka 0), then the value is defined.
 /// If the ReturnCode is not 0, then the value is still alocated with a default zero value
 #[repr(C)]
 pub struct ReturnValue<T> {
@@ -104,6 +108,7 @@ pub struct ReturnValue<T> {
 }
 
 /// A Handle that serves for easy access to getting and updating properties
+///
 /// These handles can (and should be where possible) generated at compile time
 #[repr(C)]
 #[derive(Clone,Copy,PartialEq,Eq,Hash,Debug)]
@@ -140,6 +145,37 @@ impl PropertyHandle {
         let prop_name = split.next()?;
 
         Some(Self { plugin: utils::generate_plugin_name_hash(plugin_name)?, property: utils::generate_property_name_hash(prop_name)? })
+    }
+}
+
+/// A Handle that represents a event
+///
+/// They work similar to [`PropertyHandle`], except they represent Events (duh).
+/// Used to create, subscribe and identify received Events.
+///
+/// These handles can (and should be where possible) generated at compile time
+#[repr(C)]
+#[derive(Clone,Copy,PartialEq,Eq,Hash,Debug)]
+pub struct EventHandle {
+    pub plugin: u64,
+    pub event: u64
+}
+
+impl Default for EventHandle {
+    fn default() -> Self {
+        EventHandle { plugin: 0, event: 0 }
+    }
+}
+
+impl EventHandle {
+    pub(crate) fn new(str: &str) -> Option<Self> {
+        let str = str.trim();
+        let mut split = str.splitn(2, '.');
+
+        let plugin_name = split.next()?;
+        let prop_name = split.next()?;
+
+        Some(Self { plugin: utils::generate_plugin_name_hash(plugin_name)?, event: utils::generate_event_name_hash(prop_name)? })
     }
 }
 
@@ -229,6 +265,9 @@ pub enum MessageType {
     InternalMessage = 2,
     PluginMessagePtr = 5,
 
+    EventTriggered = 6,
+    EventUnsubscribed = 7,
+
     // Update = 0,
     // Removed = 1,
     Lock = 10,
@@ -243,7 +282,8 @@ pub union MessageValue {
     pub message_ptr: MessagePtr,
     pub flag: bool,
     pub removed_property: PropertyHandle,
-    pub update: ManuallyDrop<UpdateValue> 
+    pub update: ManuallyDrop<UpdateValue>,
+    pub event: EventHandle,
 }
 
 #[repr(C)]

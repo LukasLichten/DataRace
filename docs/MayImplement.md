@@ -19,3 +19,21 @@ We can take another Property, and just relay it.
 This is perfect for a universal GameManager, so it can take the property from any gamereader and relay it into one.  
 We shallow_clone similar to subscription, and then set allow_edit inside the PropertyContainer to false (as we don't own it, we are just passing it through).  
 We would need to be informed about the gamereader changing type of the original property, so we can change too.  
+
+## Rewrite Events to trigger events directly
+Currently we have a seperate task that handles the events, but this adds latency, as to trigger we need to send a message to the event loop,
+then the event loop looks up and dispatches the events to the PluginLoaders, which then trigger the update function in the reciever plugin.  
+  
+The alternative is that our plugin(handle) holds our events and their listeners, so the trigger function blockingly dispatches
+the event to the PluginLoaders (and continue from there like above).  
+This skips one Channel (with it's send, awake and receive overhead, plus cpu overhead from the extra task).  
+The disadvantage is that we have to lock not just when events are created and deleted (like with properties), but also when we subscribe
+(as we need to add the receiver into the PluginHandle, the plugin has to be able to read this afterall during trigger).  
+  
+So this solution creates additional overhead from having to lock the handle regularly, and that might negate any gains.
+Besides, the current implementation might be fast enough already, and will get
+bottlenecked by PluginLoader and unoptimized update functions before anything.  
+  
+The advantage of the current implementation is that you can technically even ignore locking of the handle, as the channel to access the handle will never change,
+therefore it is (basically) memory safe to access it, so events can be triggered with complete disregard.
+While with this propossed solution you will need to make sure that the plugin isn't racing itself.  

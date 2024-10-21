@@ -1,5 +1,5 @@
 use std::{ffi::CString, os::raw::c_void};
-use crate::wrappers::{DataStoreReturnCode, PluginHandle, PluginLockGuard, Property, PropertyHandle};
+use crate::wrappers::{DataStoreReturnCode, EventHandle, PluginHandle, PluginLockGuard, Property, PropertyHandle};
 
 use datarace_plugin_api_sys as sys;
 
@@ -152,7 +152,91 @@ impl PluginHandle {
         DataStoreReturnCode::from(res)
     }
 
+    /// Creates a new Event (if it doesn't exists already).
+    ///
+    /// This is done by sending a message to the event loop, so we don't know if the event already
+    /// exists, and it may take time to be created.
+    /// Also you can only create events from your plugin.
+    ///
+    /// But as all Event related calls go through the event loop it is guaranteed that the event
+    /// exists for any trigger calls following this function
+    pub fn create_event(&self, event_handle: EventHandle) -> DataStoreReturnCode {
+        let res = unsafe {
+            sys::create_event(self.get_ptr(), event_handle.get_inner())
+        };
+
+        DataStoreReturnCode::from(res)
+    }
+
+    /// Deletes a Event.
+    ///
+    /// This is done by sending a message to the event loop, so we don't know if the event even
+    /// existed, and it may take time to execute.
+    /// Also you can only delete events from your plugin.
+    ///
+    /// But as all Event related calls go through the event loop it is guaranteed that the event
+    /// will not exist for any event related calls after this function
+    pub fn delete_event(&self, event_handle: EventHandle) -> DataStoreReturnCode {
+        let res = unsafe {
+            sys::delete_event(self.get_ptr(), event_handle.get_inner())
+        };
+
+        DataStoreReturnCode::from(res)
+    }
+
+    /// Subscribes to an event
+    ///
+    /// This is done by sending a message to the event loop, so we don't know if the event even
+    /// exists, and it may take time to execute.
+    ///
+    /// If an event does not exist, then it will bookmark it, and automatically subscribe it once the
+    /// plugin finally creates it.
+    /// If that plugin is shut down before creation, then you are still notfied of unsubscription 
+    /// (this is only for plugins shutdown after this function call, excluding plugin shutdown caused by datarace shutting down in general).
+    ///
+    /// It is possible that the first triggering of the event is already queued, then this subscription
+    /// will miss the first trigger.
+    pub fn subscribe_event(&self, event_handle: EventHandle) -> DataStoreReturnCode {
+        let res = unsafe {
+            sys::subscribe_event(self.get_ptr(), event_handle.get_inner())
+        };
+
+        DataStoreReturnCode::from(res)
+    }
+
+    /// Unsubscribes to an event
+    ///
+    /// This is done by sending a message to the event loop, so we don't know if the event even
+    /// exists (or if we were even subscribed to it), and it may take time to execute.
+    ///
+    /// As such you may see some more events that where queued before this unsubscription. 
+    ///
+    /// You will be notified when the unsubscribe is complete, but only if the event existed (and you
+    /// were subscribed).
+    pub fn unsubscribe_event(&self, event_handle: EventHandle) -> DataStoreReturnCode {
+        let res = unsafe {
+            sys::unsubscribe_event(self.get_ptr(), event_handle.get_inner())
+        };
+
+        DataStoreReturnCode::from(res)
+    }
+
+    /// Triggers an event
+    ///
+    /// It sends a message to the event loop, so there is no confirmation that your event exists.
+    ///
+    /// While there can be delays befor execution, but creation/deletion/other trigger calls are
+    /// guaranteed to not be reordered
+    pub fn trigger_event(&self, event_handle: EventHandle) -> DataStoreReturnCode {
+        let res = unsafe {
+            sys::trigger_event(self.get_ptr(), event_handle.get_inner())
+        };
+
+        DataStoreReturnCode::from(res)
+    }
+
     /// Allows you to send a raw memory pointer to another plugin.  
+    ///
     /// The target is plugin id of the target plugin.  
     /// reason serves as a way to communicate what this pointer is for, although the recipient is also
     /// told your plugin id.  
@@ -200,12 +284,12 @@ impl PluginHandle {
     }
 }
 
-/// Generates the PropertyHandle used for reading and updating values
+/// Generates the PropertyHandle used for reading and updating values.
 /// 
 /// Preferrably you use the `crate::macros::generate_property_handle!()` macro to generate this
 /// handle at compiletime, which allows you to cut down on overhead.
 /// But in case of dynmaics where the name of the property could change this function is better,
-/// but still, it is highly adviced you store this value
+/// but still, it is highly adviced you store this value.
 ///
 /// Property names are not case sensitive, have to contain at least one dot, with the first dot
 /// deliminating between plugin and property (but the property part can contain further dots).
@@ -225,6 +309,34 @@ pub fn generate_property_handle<S: ToString>(name: S) -> Result<PropertyHandle, 
     }
 
     Ok(PropertyHandle::new(res.value))
+}
+
+/// Generates the EventHandle used for creating, deleting, triggering and identifzing incoming
+/// events.
+/// 
+/// Preferrably you use the `crate::macros::generate_event_handle!()` macro to generate this
+/// handle at compiletime, which allows you to cut down on overhead.
+/// But in case of dynmaics where the name of the event could change this function is better,
+/// but still, it is highly adviced you store this value.
+///
+/// Event names are not case sensitive, have to contain at least one dot, with the first dot
+/// deliminating between plugin and property (but the property part can contain further dots).
+/// You can not have any leading or trailing dots
+pub fn generate_event_handle<S: ToString>(name: S) -> Result<EventHandle, DataStoreReturnCode> {
+    let name_ptr = create_cstring!(name);
+
+    let res = unsafe {
+        sys::generate_event_handle(name_ptr)
+    };
+    drop_cstring!(name_ptr);
+
+    
+    let code = DataStoreReturnCode::from(res.code);
+    if code != DataStoreReturnCode::Ok {
+        return Err(code);
+    }
+
+    Ok(EventHandle::new(res.value))
 }
 
 /// Allows you to optain the id of another plugin based on it's name. 
