@@ -360,3 +360,4 @@ pub extern "C" fn update(handle: *mut datarace_plugin_api::reexport::PluginHandl
 }
     }.into_token_stream().into()
 }
+

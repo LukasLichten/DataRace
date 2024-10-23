@@ -3,6 +3,7 @@ use quote::{quote, quote_spanned, ToTokens};
 use syn::{parse::{Parse, ParseStream}, parse_macro_input, Ident, LitInt, LitStr, Token};
 
 mod attr;
+mod genators;
 
 /// Add this the function you want to handle the plugin init.  
 /// 
@@ -40,6 +41,45 @@ pub fn plugin_init(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn plugin_update(attr: TokenStream, item: TokenStream) -> TokenStream {
     attr::plugin_update(attr, item)
+}
+
+/// Converts a series of tupples into const PropertyHandles and a function that calls the pluginhandle to create
+/// them.
+///
+/// You pass in a function name and then a series of tuples like this:
+/// ```
+/// propertys_initor!{ prop_init, "testplugin",
+///     (BASIC_PROP, "basic", 4.5),
+/// }
+/// ```
+/// Which generates something equivalent to this:
+/// ```
+/// pub const BASIC_PROP: PropertyHandle = generate_property_handle!("testplugin.basic");
+///
+/// pub fn prop_init(handle: &PluginHandle) -> Result<(), String> {
+///     handle.create_property("basic", BASIC_PROP, Property::Float(4.5))
+///         .to_result().map_err(|e| e.to_string())?;
+///
+///     Ok(())
+/// }
+/// ```
+///
+/// As such, it is still required for you to call this new function during init
+/// (or you could later, but shouldn't) to create the properties.
+///
+/// Further examples for more complex datatypes:
+/// ```
+///     (STR_PROP, "text", "Hewo Wowld!"),
+///     (DUR_PROP, "time", Duration::from_sec(12)),
+///     (ARR_PROP, "array", [false; 8]),
+///     (NONE_PROP, "null", None),
+///     (DIRECT_PROP, "dir", Property::Int(4))
+/// ```
+///
+/// Your LSP might flag the function name as "expected fn", this can be ignored
+#[proc_macro]
+pub fn propertys_initor(input: TokenStream) -> TokenStream {
+    genators::property_initor(input)
 }
 
 struct DescriptorTokens {

@@ -14,6 +14,18 @@ datarace_plugin_api::macros::plugin_descriptor_fn!("sample_plugin", 0, 1, 0);
 const PROP_HANDLE: PropertyHandle = datarace_plugin_api::macros::generate_property_handle!("sample_plugin.Test");
 const EVENT_HANLDE: EventHandle = datarace_plugin_api::macros::generate_event_handle!("sample_plugin.event");
 
+// This macro generates const handles (like above) and a function to create these Properties.
+//
+// The first value is the name of the function to be created (your LSP may show `expect fn`, false error),
+// The second is the plugin name as string literal (which will be prefixed ahead of the plugin names).
+// The rest are Tuples, containing:
+// - The handle variable name (remember, it is a const, so caps)
+// - The propertyname (without the plugin name)
+// - And the inital value (from literals to arrays are allowed, check the docs)
+datarace_plugin_api::macros::propertys_initor!{ test, "sample_plugin",
+    (GEN_PROP_HANDLE, "generated", "Macros Rock!"),
+}
+
 // Allows you to store data between invocations
 pub(crate) struct State {
     lock_count: std::sync::atomic::AtomicU64,
@@ -30,35 +42,46 @@ pub(crate) struct State {
 // Returning Err will shutdown the plugin
 #[datarace_plugin_api::macros::plugin_init]
 fn handle_init(handle: PluginHandle) -> Result<PluginState,String> {
-    let prop_name = "sample_plugin.Test";
-    
     // Or you can generate them at runtime, but this requires allocation and time to hash,
     // so use it only for dynamic properties, and store them for future use (idealy)
+    let prop_name = "sample_plugin.Test";
+
     let runtime_prop_handle = datarace_plugin_api::api::generate_property_handle(prop_name).unwrap();
     let compiled_prop_handle = datarace_plugin_api::macros::generate_property_handle!(" sample_plugin.test");
 
     assert_eq!(runtime_prop_handle, compiled_prop_handle, "these will be equal for the same (case insensetive) name");
     assert_eq!(runtime_prop_handle, PROP_HANDLE, "including those in consts you can also stored them in consts");
 
+    // Calling the function created by propertys_initor macro
+    // This is required, as we otherwise have only handles, but the propertys won't be created.
+    //
+    // The function always takes a &PluginHandle as argument, and returns Result<(), String>.
+    test(&handle)?;
 
+    // Creating the Properties manually
     match handle.create_property("Test", PROP_HANDLE, Property::Int(5)) {
+        // One way of doing error handling:
         DataStoreReturnCode::Ok => (),
         e => handle.log_error(e)
     };
 
     handle.subscribe_property(PROP_HANDLE);
 
+    // Creating an array, of size 3, with inital value 3, but we override [1] = 2 and [2] = 1
     let array = datarace_plugin_api::wrappers::ArrayHandle::new(&handle, Property::from(3), 3).unwrap();
     array.set(&handle, 1, Property::from(2));
     array.set(&handle, 2, Property::from(1));
     // handle.log_info(Property::from(array.clone()).to_string());
     
-    let _ = handle.create_property("extra", datarace_plugin_api::macros::generate_property_handle!("sample_plugin.extra"), Property::from(array));
+    handle.create_property("arr", datarace_plugin_api::macros::generate_property_handle!("sample_plugin.arr"), Property::from(array))
+        .to_result().map_err(|e| e.to_string())?; // Other way of error handling
 
+    // Creating an event
     let ev = datarace_plugin_api::api::generate_event_handle("sample_plugin.event").unwrap();
     handle.create_event(ev);
     handle.subscribe_event(ev);
 
+    // Returning Ok, in this case with our state. As we didn't create it earlier, we create it here
     Ok(State { lock_count: std::sync::atomic::AtomicU64::default() })
     // Ok(())
 }
@@ -82,9 +105,14 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
 
             handle.log_info("Startup finished");
 
-            if let Ok(extra) = handle.get_property_value(datarace_plugin_api::macros::generate_property_handle!("sample_plugin.extra")) {
-                handle.log_info(format!("Extra is: {}", extra.to_string()));
+            if let Ok(arr) = handle.get_property_value(datarace_plugin_api::macros::generate_property_handle!("sample_plugin.arr")) {
+                handle.log_info(format!("Array is: {}", arr.to_string()));
             }
+
+            if let Ok(arr) = handle.get_property_value(GEN_PROP_HANDLE) {
+                handle.log_info(format!("Generated Prophandle is here too: {}", arr.to_string()));
+            }
+
         },
         Message::OtherPluginStarted(id) => {
             // Informs us of the startup of another plugin

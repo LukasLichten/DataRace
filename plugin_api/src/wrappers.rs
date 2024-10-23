@@ -122,7 +122,7 @@ impl ArrayHandle {
     /// The type and size can not be changed without creating a new array.
     ///
     /// The only permissable types are Int, Float, Bool, String and Duration.
-    /// None and Array will cause this function to fail, no array tp be created, and return None.
+    /// None and Array will cause this function to fail, no array to be created, and return None.
     pub fn new(handle: &PluginHandle, value: Property, size: usize) -> Option<Self> {
         let ptr = unsafe {
             sys::create_array(handle.ptr, size, value.to_c())
