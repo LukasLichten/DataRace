@@ -351,6 +351,7 @@ pub(crate) enum DashElementType {
 pub(crate) enum Property<T> {
     Fixed(T),
     Computed(String),
+    Formated{ source: String, formater: String }
     // Deref(String, Property<i64>)
 }
 
@@ -363,6 +364,13 @@ impl Property<bool> {
             Property::Computed(_) => {
                 if let Some(res) = self.gen_handle_js() {
                     format!("read_bool({})", res)
+                } else {
+                    self.get_static_value().to_string()
+                }
+            },
+            Property::Formated { source: _, formater } => {
+                if let Some(res) = self.gen_handle_js() {
+                    format!("parse_to_bool(pass_into({}, function(value) {{ {} }}))", res, formater)
                 } else {
                     self.get_static_value().to_string()
                 }
@@ -380,6 +388,13 @@ impl Property<i64> {
             Property::Computed(_) => {
                 if let Some(res) = self.gen_handle_js() {
                     format!("read_int({})", res)
+                } else {
+                    self.get_static_value().to_string()
+                }
+            },
+            Property::Formated { source: _, formater } => {
+                if let Some(res) = self.gen_handle_js() {
+                    format!("Math.round(parseFloat(pass_into({}, function(value) {{ {} }})))", res, formater)
                 } else {
                     self.get_static_value().to_string()
                 }
@@ -401,6 +416,13 @@ impl Property<f64> {
                 } else {
                     self.get_static_value().to_string()
                 }
+            },
+            Property::Formated { source: _, formater } => {
+                if let Some(res) = self.gen_handle_js() {
+                    format!("parseFloat(pass_into({}, function(value) {{ {} }}))", res, formater)
+                } else {
+                    self.get_static_value().to_string()
+                }
             }
         }
     }
@@ -415,6 +437,13 @@ impl Property<String> {
             Property::Computed(_) => {
                 if let Some(res) = self.gen_handle_js() {
                     format!("read_string({})", res)
+                } else {
+                    self.get_static_value().to_string()
+                }
+            },
+            Property::Formated { source: _, formater } => {
+                if let Some(res) = self.gen_handle_js() {
+                    format!("pass_into({}, function(value) {{ {} }}).toString()", res, formater)
                 } else {
                     self.get_static_value().to_string()
                 }
@@ -439,6 +468,9 @@ impl<T> Property<T> {
             Property::Computed(handle) => {
                 PropertyHandle::new(handle.as_str())
             },
+            Property::Formated { source, formater: _ } => {
+                PropertyHandle::new(source.as_str())
+            },
             _ => None
         }
 
@@ -447,7 +479,8 @@ impl<T> Property<T> {
     pub(crate) fn is_computed(&self) -> bool {
         match self {
             Property::Fixed(_) => false,
-            Property::Computed(_) => true
+            Property::Computed(_) => true,
+            Property::Formated { source: _, formater: _ } => true
         }
     }
 
@@ -463,6 +496,9 @@ impl<T> Property<T> where T: Default + Clone {
         match self {
             Property::Fixed(res) => res.clone(),
             Property::Computed(_) => {
+                T::default()
+            },
+            Property::Formated { source: _, formater: _ } => {
                 T::default()
             }
         }
