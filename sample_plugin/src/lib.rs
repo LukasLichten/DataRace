@@ -24,6 +24,7 @@ const EVENT_HANLDE: EventHandle = datarace_plugin_api::macros::generate_event_ha
 // - And the inital value (from literals to arrays are allowed, check the docs)
 datarace_plugin_api::macros::propertys_initor!{ test, "sample_plugin",
     (GEN_PROP_HANDLE, "generated", "Macros Rock!"),
+    (TEST_VISIBLE, "dashvis", 1)
 }
 
 // Allows you to store data between invocations
@@ -53,7 +54,7 @@ fn handle_init(handle: PluginHandle) -> Result<PluginState,String> {
     assert_eq!(runtime_prop_handle, PROP_HANDLE, "including those in consts you can also stored them in consts");
 
     // Calling the function created by propertys_initor macro
-    // This is required, as we otherwise have only handles, but the propertys won't be created.
+    // When using the macro calling this is required, as we otherwise have only handles, but the propertys won't be created.
     //
     // The function always takes a &PluginHandle as argument, and returns Result<(), String>.
     test(&handle)?;
@@ -180,8 +181,8 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
 
             let later = std::time::Instant::now();
 
-            // let res = api::change_property_type(&handle, &PROP_HANDLE, Property::Duration(i64::try_from((later-start).as_micros()).expect("impossible to be out of bounds")));
-            let res = handle.change_property_type(PROP_HANDLE, Property::Str(format!("{}us", (later-start).as_micros())));
+            let res = handle.change_property_type(PROP_HANDLE, Property::from(later-start));
+            // let res = handle.change_property_type(PROP_HANDLE, Property::Str(format!("{}us", (later-start).as_micros())));
             match res {
                 DataStoreReturnCode::Ok => {
                     handle.log_info("Changed");
@@ -223,6 +224,12 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
         Message::EventTriggered(ev) => {
             if ev == EVENT_HANLDE {
                 handle.log_info("We received our sample event");
+                
+                // Specifically for testing dashboards on changeable values
+                // if let Ok(Property::Int(b)) = handle.get_property_value(TEST_VISIBLE) {
+                //     handle.update_property(TEST_VISIBLE, Property::from((b - 1).abs()));
+                // }
+                // handle.trigger_event(EVENT_HANLDE);
 
                 // handle.delete_event(event);
                 handle.unsubscribe_event(EVENT_HANLDE);

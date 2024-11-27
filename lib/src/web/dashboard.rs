@@ -63,6 +63,8 @@ impl Render for Dashboard {
 
             script src="/lib/socket.io.js" {}
 
+            script src="/lib/datarace.dash.js" {}
+
             script {
                 "const DISCO = document.getElementById('DISCO');"
                 "const BODY = document.getElementById('BODY');"
@@ -129,7 +131,7 @@ impl Render for Dashboard {
                     "console.log(UPDATE);"
 
                     (PreEscaped("UPDATE.forEach((value, key) => DATA.set(key, value));"))
-                    
+
                     @for item in &self.elements {
                         (item.generate_update_js())
                     }
@@ -266,8 +268,13 @@ impl DashElement {
         html!{
             "{"
                 // Handling visibility
-                @if let Property::Computed(_) = self.visible {
-
+                @if self.visible.is_computed() {
+                    (PreEscaped(format!("if({})", self.visible.generate_read_js())))
+                    "{"
+                         (format!("{}.style.display = 'block';", name.as_str()))
+                    "} else {"
+                         (format!("{}.style.display = 'none';", name.as_str()))
+                    "}"
                 } @else {
                     (format!("{}.style.display = '{}';", name.as_str(),
                         match self.visible.get_static_value() {
@@ -286,6 +293,8 @@ impl DashElement {
                         }
                     },
                     DashElementType::Text(text) => {
+                        // (PreEscaped(format!("console.log(DATA.get({}).Int == null);", serde_json::to_string(&text.get_property_handle()).unwrap())))
+
                         @if text.is_computed() {
                             (PreEscaped(format!("{}.firstElementChild.textContent = {};", name.as_str(), text.generate_read_js())))
                         }
@@ -341,7 +350,8 @@ pub(crate) enum DashElementType {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) enum Property<T> {
     Fixed(T),
-    Computed(String)
+    Computed(String),
+    // Deref(String, Property<i64>)
 }
 
 impl Property<bool> {
@@ -352,7 +362,7 @@ impl Property<bool> {
             },
             Property::Computed(_) => {
                 if let Some(res) = self.gen_handle_js() {
-                    format!("{}.Bool", res)
+                    format!("read_bool({})", res)
                 } else {
                     self.get_static_value().to_string()
                 }
@@ -369,7 +379,25 @@ impl Property<i64> {
             },
             Property::Computed(_) => {
                 if let Some(res) = self.gen_handle_js() {
-                    format!("{}", res)
+                    format!("read_int({})", res)
+                } else {
+                    self.get_static_value().to_string()
+                }
+            }
+        }
+    }
+}
+
+impl Property<f64> {
+    #[allow(dead_code)]
+    fn generate_read_js(&self) -> String {
+        match self {
+            Property::Fixed(val) => {
+                val.to_string()
+            },
+            Property::Computed(_) => {
+                if let Some(res) = self.gen_handle_js() {
+                    format!("read_float({})", res)
                 } else {
                     self.get_static_value().to_string()
                 }
@@ -386,7 +414,7 @@ impl Property<String> {
             },
             Property::Computed(_) => {
                 if let Some(res) = self.gen_handle_js() {
-                    format!("{}.Str", res)
+                    format!("read_string({})", res)
                 } else {
                     self.get_static_value().to_string()
                 }

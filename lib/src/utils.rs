@@ -692,6 +692,15 @@ pub(crate) enum Value {
     Float(f64),
     Bool(bool),
     Str(String),
+
+    // It is of note: js auto converts to doubles (52bit mantise),
+    // so messauring in microseconds means we start loosing precision already after ~140 years.
+    // Frankly, js will likely have switched to 128bit floats at that point
+    //
+    // Otherwise, rewrite all js code to expect duration to be in seconds and...
+    // You know, doesn't matter, same precision issue, you will eventually loose the microsecond
+    // precision, although if your number reads over 100years I think you have different
+    // priorities, and while internally i64 hard caps Duration to 500k years, js can handle more.
     Dur(i64)
 }
 
