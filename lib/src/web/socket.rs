@@ -105,9 +105,15 @@ async fn update(io: SocketIo, datastore: SocketDataRef, rx: AsyncReceiver<Socket
             };
             
             if new {
+                let val = if let Some(arr) = &value_cache.change {
+                    Value::ArrUpdate(arr.clone())
+                } else {
+                    value_cache.value.clone()
+                };
+
                 for d in dashes {
                     if let Some((list, _)) = cache.get_mut(d) {
-                        list.push((handle.clone(), value_cache.value.clone()));
+                        list.push((handle.clone(), val.clone()));
                     }
                 }
             }

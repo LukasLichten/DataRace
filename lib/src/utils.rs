@@ -1,5 +1,5 @@
 use libc::c_char;
-use serde::{Deserialize, Serialize}; 
+use serde::{Deserialize, Serialize};
 use std::{ffi::{CStr, CString}, fmt::Debug, sync::{atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering}, Arc, RwLock}};
 use kanal::{Sender, Receiver};
 use highway::{HighwayHash, HighwayHasher, Key};
@@ -328,10 +328,18 @@ impl ValueContainer {
             ValueContainer::Str(arc) => {
                 let (store, index) = (&arc.0, arc.1.load(Ordering::Acquire));
                 
-                if let Some(old_index) = cache.version {
-                    if old_index == index {
-                        return false;
+                if let Some(arr) = cache.version.as_mut() {
+                    if let Some(old_index) = arr.get_mut(0) {
+                        if old_index == &index {
+                            return false;
+                        } else {
+                            *old_index = index;
+                        }
+                    } else {
+                        arr.push(index);
                     }
+                } else {
+                    cache.version = Some(vec![index]);
                 }
 
                 let res = match store.read() {
@@ -348,12 +356,13 @@ impl ValueContainer {
                     }
                 };
                 
-                cache.version = Some(index);
                 cache.value = Value::Str(res);
                 return true;
             },
             ValueContainer::Dur(at) => Value::Dur(at.load(READ_ORDERING)),
-            ValueContainer::Arr(_) => todo!("Implement web reading of Array")
+            ValueContainer::Arr(arr) => {
+                return arr.read_web(cache);
+            }
         };
 
         if cache.value == val {
@@ -461,6 +470,27 @@ macro_rules! array_create {
             v.into_boxed_slice()
         }
     };
+}
+
+macro_rules! web_read_value {
+    ($arr:ident, $changes:ident, $cache_arr:ident, $type:ident) => {
+        let mut index = 0;
+        while let Some(at) = $arr.get(index) {
+            let value = at.load(READ_ORDERING);
+            if let Some(Value::$type(old)) = $cache_arr.get_mut(index) {
+                if *old != value {
+                    *old = value;
+
+                    $changes.push((index, Value::$type(value)));
+                }
+            } else {
+                $changes.push((index, Value::$type(value)));
+                $cache_arr.insert(index, Value::$type(value));
+            }
+
+            index += 1;
+        }
+    }
 }
 
 impl ArrayValueContainer {
@@ -582,6 +612,119 @@ impl ArrayValueContainer {
         }
     }
 
+
+    pub(crate) fn read_web(&self, cache: &mut ValueCache) -> bool {
+        let cache_arr = if let Value::Arr(arr) = &mut cache.value {
+            arr
+        } else {
+            // This handles a type change, and this recursion can only happen once
+            cache.value = Value::Arr(Vec::<Value>::with_capacity(self.length()));
+            return self.read_web(cache);
+        };
+
+        let mut changes = Vec::<(usize, Value)>::with_capacity(self.length());
+
+        match self {
+            Self::Int(arr) => { web_read_value!(arr, changes, cache_arr, Int); },
+            Self::Float(arr) => {
+                let mut index = 0;
+                while let Some(at) = arr.get(index) {
+                    let value = at.load(READ_ORDERING);
+
+                    let value = f64::from_be_bytes(value.to_be_bytes());
+                    if let Some(Value::Float(old)) = cache_arr.get_mut(index) {
+                        if *old != value {
+                            *old = value;
+
+                            changes.push((index, Value::Float(value)));
+                        }
+                    } else {
+                        changes.push((index, Value::Float(value)));
+                        cache_arr.insert(index, Value::Float(value));
+                    }
+
+                    index += 1;
+                }
+            },
+            Self::Dur(arr) => { web_read_value!(arr, changes, cache_arr, Dur); },
+            Self::Bool(arr) => { web_read_value!(arr, changes, cache_arr, Bool); },
+            Self::Str(arr) => {
+                let mut index = 0;
+
+                let version_arr = if let Some(ver) = &mut cache.version {
+                    if ver.len() != self.length() {
+                        let mut ver = Vec::<usize>::with_capacity(self.length());
+                        ver.resize_with(self.length(), Default::default);
+                        cache.version = Some(ver);
+
+                        return self.read_web(cache);
+                    }
+
+                    ver
+                } else {
+                    let mut ver = Vec::<usize>::with_capacity(self.length());
+                    ver.resize_with(self.length(), Default::default);
+                    cache.version = Some(ver);
+
+                    return self.read_web(cache);
+                };
+
+                while let (Some((text,version)),Some(old_version)) = (arr.get(index), version_arr.get_mut(index)) {
+                    let version = version.load(Ordering::Acquire);
+                    if version != *old_version {
+                        let res = match text.read() {
+                            Ok(res) => {
+                                res.clone()
+                            },
+                            Err(_) => {
+                                // As we don't have write access, and there seems to be poison, we return a
+                                // blank string as fallback, as technically there is no garantee the string
+                                // object stored is in one piece.
+                                // But in reality this case should be pratically impossible, we only write
+                                // a single string while holding this handle, this should never go wrong
+                                "".to_string()
+                            }
+                        };
+                        
+                        *old_version = version;
+
+                        changes.push((index, Value::Str(res.clone())));
+                        
+                        if let Some(Value::Str(old)) = cache_arr.get_mut(index) {
+                            *old = res;
+                        } else {
+                            cache_arr.insert(index, Value::Str(res));
+                        }
+                    }
+                    
+                    index += 1;
+                }
+            }
+        }
+
+        if cache_arr.len() > self.length() {
+            cache_arr.truncate(self.length());
+
+            cache.change = None;
+            return true;
+        }
+
+        if changes.is_empty() {
+            cache.change = None;
+            false
+        } else {
+            let threshhold = self.length() / 2; // If half the values in the arrary changed we
+            // update all
+
+            if threshhold < changes.len() {
+                cache.change = None;
+            } else {
+                cache.change = Some(changes);
+            }
+            true
+        }
+    }
+
     pub(crate) fn write(&self, index: usize, value: Property, plugin_handle: &PluginHandle) -> DataStoreReturnCode {
         match (self,value.sort) {
             (Self::Int(arc),PropertyType::Int) => {
@@ -675,12 +818,16 @@ impl ArrayValueContainer {
 #[derive(Debug, Clone)]
 pub(crate) struct ValueCache {
     pub value: Value,
-    version: Option<usize>
+    version: Option<Vec<usize>>,
+
+    // If this is set to None, then there might have been change, but it is considered easier to
+    // send the whole array
+    pub change: Option<Vec<(usize, Value)>>,
 }
 
 impl Default for ValueCache {
     fn default() -> Self {
-        ValueCache { value: Value::None, version: None }
+        ValueCache { value: Value::None, version: None, change: None }
     }
 }
 
@@ -701,7 +848,10 @@ pub(crate) enum Value {
     // You know, doesn't matter, same precision issue, you will eventually loose the microsecond
     // precision, although if your number reads over 100years I think you have different
     // priorities, and while internally i64 hard caps Duration to 500k years, js can handle more.
-    Dur(i64)
+    Dur(i64),
+
+    Arr(Vec<Value>),
+    ArrUpdate(Vec<(usize, Value)>)
 }
 
 const HASH_KEY_NAME:Key = Key([1,2,3,4]);

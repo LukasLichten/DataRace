@@ -130,7 +130,13 @@ impl Render for Dashboard {
                     "const UPDATE = new Map(UP_ARR);"
                     "console.log(UPDATE);"
 
-                    (PreEscaped("UPDATE.forEach((value, key) => DATA.set(key, value));"))
+                    (PreEscaped("UPDATE.forEach((value, key) => { if (value.ArrUpdate != null) {
+                            let Arr = DATA.get(key);
+                            const ArrUp = new Map(value.ArrUpdate);
+                            ArrUp.forEach((value, key) => Arr[key] = value);
+                        } else {
+                            DATA.set(key, value);
+                        }});"))
 
                     @for item in &self.elements {
                         (item.generate_update_js())
@@ -351,7 +357,12 @@ pub(crate) enum DashElementType {
 pub(crate) enum Property<T> {
     Fixed(T),
     Computed(String),
-    Formated{ source: String, formater: String }
+
+    // Formater function code has the following issues:
+    // - Syntax errors result in Dashboard not running in general 
+    // - Code can (likely) access variables, like Dashboard elements, and break the dashboard
+    Formated{ source: String, formater: String },
+
     // Deref(String, Property<i64>)
 }
 

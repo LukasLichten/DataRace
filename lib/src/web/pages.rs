@@ -161,7 +161,31 @@ pub(super) async fn properties(State(datastore): State<DataStoreLocked>) -> Mark
                     Value::Float(f) => format!("Float: {}", f),
                     Value::Dur(d) => format!("Duration: {}µs", d),
                     Value::Bool(b) => format!("Boolean: {}", b),
-                    Value::Str(s) => format!("Str: {}", s)
+                    Value::Str(s) => format!("Str: {}", s),
+                    Value::Arr(arr) => {
+                        let mut arr_str = format!("Arr: [");
+                        for item in arr {
+                            arr_str = format!{"{}{}, ", arr_str,
+                                match item {
+                                    Value::Int(i) => i.to_string(),
+                                    Value::Str(s) => s,
+                                    Value::Bool(b) => b.to_string(),
+                                    Value::Dur(d) => format!("{}µs", d),
+                                    Value::Float(f) => f.to_string(),
+                                    _ => String::new()
+                                }
+                            }
+                        }
+
+                        if let Some(stripped) = arr_str.strip_suffix(", ") {
+                            arr_str = format!("{}]",stripped);
+                        } else {
+                            arr_str = format!("{}]", arr_str);
+                        }
+
+                        arr_str
+                    },
+                    Value::ArrUpdate(_) => String::new()
                 };
                 list.push((name,ouput));
             }
