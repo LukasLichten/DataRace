@@ -91,6 +91,9 @@ impl Render for Dashboard {
                 "function resize_event() {"        
                     "{"
                         // We indent it to prevent name collisions
+                        // as like rust js does masking when declaring a new variable with the same
+                        // name in a lower scope using let/var/const.
+                        // This prevents overriding const name of dashelements.
                         "console.log('Resize Event: ' + window.innerWidth + '/' + window.innerHeight);"
                         (format!("let scale_to_w = window.innerWidth / {};", self.size_x))
                         (format!("let scale_to_h = window.innerHeight / {};", self.size_y))
@@ -128,15 +131,16 @@ impl Render for Dashboard {
 
                 "socket.on('update', function(UP_ARR) {"
                     "const UPDATE = new Map(UP_ARR);"
-                    "console.log(UPDATE);"
+                    // "console.log(UPDATE);"
 
                     (PreEscaped("UPDATE.forEach((value, key) => { if (value.ArrUpdate != null) {
                             let Arr = DATA.get(key);
                             const ArrUp = new Map(value.ArrUpdate);
-                            ArrUp.forEach((value, key) => Arr[key] = value);
+                            ArrUp.forEach((value, key) => Arr.Arr[key] = value);
                         } else {
                             DATA.set(key, value);
                         }});"))
+                    // "console.log(DATA);"
 
                     @for item in &self.elements {
                         (item.generate_update_js())
@@ -363,7 +367,7 @@ pub(crate) enum Property<T> {
     // - Code can (likely) access variables, like Dashboard elements, and break the dashboard
     Formated{ source: String, formater: String },
 
-    // Deref(String, Property<i64>)
+    Deref{ source: String, index: Box<Property<i64>> }
 }
 
 impl Property<bool> {
@@ -382,6 +386,13 @@ impl Property<bool> {
             Property::Formated { source: _, formater } => {
                 if let Some(res) = self.gen_handle_js() {
                     format!("parse_to_bool(pass_into({}, function(value) {{ {} }}))", res, formater)
+                } else {
+                    self.get_static_value().to_string()
+                }
+            },
+            Property::Deref { source: _, index } => {
+                if let Some(res) = self.gen_handle_js() {
+                    format!("read_bool(read_arr({},{}))", res, index.generate_read_js())
                 } else {
                     self.get_static_value().to_string()
                 }
@@ -405,7 +416,14 @@ impl Property<i64> {
             },
             Property::Formated { source: _, formater } => {
                 if let Some(res) = self.gen_handle_js() {
-                    format!("Math.round(parseFloat(pass_into({}, function(value) {{ {} }})))", res, formater)
+                    format!("parse_to_int(pass_into({}, function(value) {{ {} }}))", res, formater)
+                } else {
+                    self.get_static_value().to_string()
+                }
+            },
+            Property::Deref { source: _, index } => {
+                if let Some(res) = self.gen_handle_js() {
+                    format!("read_int(read_arr({},{}))", res, index.generate_read_js())
                 } else {
                     self.get_static_value().to_string()
                 }
@@ -430,7 +448,14 @@ impl Property<f64> {
             },
             Property::Formated { source: _, formater } => {
                 if let Some(res) = self.gen_handle_js() {
-                    format!("parseFloat(pass_into({}, function(value) {{ {} }}))", res, formater)
+                    format!("parse_to_float(pass_into({}, function(value) {{ {} }}))", res, formater)
+                } else {
+                    self.get_static_value().to_string()
+                }
+            },
+            Property::Deref { source: _, index } => {
+                if let Some(res) = self.gen_handle_js() {
+                    format!("read_float(read_arr({},{}))", res, index.generate_read_js())
                 } else {
                     self.get_static_value().to_string()
                 }
@@ -458,6 +483,13 @@ impl Property<String> {
                 } else {
                     self.get_static_value().to_string()
                 }
+            },
+            Property::Deref { source: _, index } => {
+                if let Some(res) = self.gen_handle_js() {
+                    format!("read_string(read_arr({},{}))", res, index.generate_read_js())
+                } else {
+                    self.get_static_value().to_string()
+                }
             }
         }
     }
@@ -476,13 +508,18 @@ impl<T> Property<T> {
 
     pub(crate) fn get_property_handle(&self) -> Option<PropertyHandle> {
         match self {
+            Property::Fixed(_) => {
+                None
+            },
             Property::Computed(handle) => {
                 PropertyHandle::new(handle.as_str())
             },
             Property::Formated { source, formater: _ } => {
                 PropertyHandle::new(source.as_str())
             },
-            _ => None
+            Property::Deref { source, index: _ } => {
+                PropertyHandle::new(source.as_str())
+            }
         }
 
     }
@@ -490,14 +527,17 @@ impl<T> Property<T> {
     pub(crate) fn is_computed(&self) -> bool {
         match self {
             Property::Fixed(_) => false,
-            Property::Computed(_) => true,
-            Property::Formated { source: _, formater: _ } => true
+            _ => true,
         }
     }
 
     pub(crate) fn add_property_handle_to_collection(&self, set: &mut HashSet<PropertyHandle>) {
         if let Some(res) = self.get_property_handle() {
             set.insert(res);
+
+            if let Property::Deref { source: _, index } = self {
+                index.add_property_handle_to_collection(set);
+            }
         }
     }
 }
@@ -510,6 +550,9 @@ impl<T> Property<T> where T: Default + Clone {
                 T::default()
             },
             Property::Formated { source: _, formater: _ } => {
+                T::default()
+            },
+            Property::Deref { source: _, index: _ } => {
                 T::default()
             }
         }

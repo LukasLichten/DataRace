@@ -146,6 +146,9 @@ pub(super) async fn dashboard_list(State(datastore): State<DataStoreLocked>) -> 
     Ok(generate_page(cont, 1).await)
 }
 
+/// Microseconds per second: 1s = 1000ms, 1ms = 1000us
+const US_PER_SEC: f64 = 1000.0 * 1000.0;
+
 pub(super) async fn properties(State(datastore): State<DataStoreLocked>) -> Markup {
     let property_list = {
         let ds_r = datastore.read().await;
@@ -159,7 +162,7 @@ pub(super) async fn properties(State(datastore): State<DataStoreLocked>) -> Mark
                     Value::None => "None".to_string(),
                     Value::Int(i) => format!("Int: {}", i),
                     Value::Float(f) => format!("Float: {}", f),
-                    Value::Dur(d) => format!("Duration: {}µs", d),
+                    Value::Dur(d) => format!("Duration: {}s", (d as f64) / US_PER_SEC ),
                     Value::Bool(b) => format!("Boolean: {}", b),
                     Value::Str(s) => format!("Str: {}", s),
                     Value::Arr(arr) => {
@@ -170,7 +173,7 @@ pub(super) async fn properties(State(datastore): State<DataStoreLocked>) -> Mark
                                     Value::Int(i) => i.to_string(),
                                     Value::Str(s) => s,
                                     Value::Bool(b) => b.to_string(),
-                                    Value::Dur(d) => format!("{}µs", d),
+                                    Value::Dur(d) => format!("{}s", (d as f64) / US_PER_SEC),
                                     Value::Float(f) => f.to_string(),
                                     _ => String::new()
                                 }

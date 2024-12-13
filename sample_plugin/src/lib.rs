@@ -223,13 +223,21 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
         },
         Message::EventTriggered(ev) => {
             if ev == EVENT_HANLDE {
-                handle.log_info("We received our sample event");
+                // handle.log_info("We received our sample event");
                 
                 // Specifically for testing dashboards on changeable values
                 // if let Ok(Property::Int(b)) = handle.get_property_value(TEST_VISIBLE) {
-                //     handle.update_property(TEST_VISIBLE, Property::from((b - 1).abs()));
+                //     handle.update_property(TEST_VISIBLE, Property::from((b + 1).abs()));
                 // }
                 // handle.trigger_event(EVENT_HANLDE);
+                
+                // Specifically for debugging changes to arrays
+                // if let Ok(Property::Array(arr)) = handle.get_property_value(datarace_plugin_api::macros::generate_property_handle!("sample_plugin.arr")) {
+                //     if let Some(Property::Int(i)) = arr.get(1) {
+                //         arr.set(&handle, 1, Property::from(i + 1));
+                //         handle.trigger_event(EVENT_HANLDE);
+                //     }
+                // }
 
                 // handle.delete_event(event);
                 handle.unsubscribe_event(EVENT_HANLDE);
