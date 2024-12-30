@@ -11,6 +11,7 @@ pub(super) type SocketDataRef = &'static SocketData;
 #[derive(Debug, Clone)]
 pub(super) enum Auth {
     Dashboard(String),
+    #[allow(dead_code)]
     Plugin(u64, Arc<String>)
 }
 

@@ -55,6 +55,10 @@ pub fn main() {
     // to bindgen, and lets you build up options for
     // the resulting bindings.
     let bindings = bindgen::Builder::default()
+        // Allowlisting to remove clutter
+        .allowlist_recursively(true)
+        .allowlist_file(h_path.to_str().unwrap())
+
         // The input header we would like to generate
         // bindings for.
         .header(h_path.to_str().unwrap())
@@ -64,7 +68,7 @@ pub fn main() {
         // Finish the builder and generate the bindings.
         .generate()
         // Unwrap the Result and panic on failure.
-        .expect("Unable to generate bindings for datarace_plugin_api_lib, did you generate C bindings?");
+        .expect("Unable to generate bindings for datarace library, did you generate C bindings?");
 
     // Write the bindings to the $OUT_DIR/bindings.rs file.
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
