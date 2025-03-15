@@ -151,15 +151,17 @@ async fn process_msg(
                 let list = dash.list_properties();
 
                 for p in list {
-                    if let Some((value_cache, dashes)) = props.get_mut(&p) {
-                        *value_cache = ValueCache::default(); // Forces a refresh
-                        
-                        if !dashes.contains(&name) {
-                            // Maybe another instance of this dashboard already subscribed to it
-                            dashes.push(name.clone());
+                    if let Some(prop_handle) = PropertyHandle::new(p.as_str()) {
+                        if let Some((value_cache, dashes)) = props.get_mut(&prop_handle) {
+                            *value_cache = ValueCache::default(); // Forces a refresh
+                            
+                            if !dashes.contains(&name) {
+                                // Maybe another instance of this dashboard already subscribed to it
+                                dashes.push(name.clone());
+                            }
+                        } else {
+                            props.insert(prop_handle, (ValueCache::default(), vec![name.clone()]));
                         }
-                    } else {
-                        props.insert(p, (ValueCache::default(), vec![name.clone()]));
                     }
                 }
                 

@@ -1,6 +1,7 @@
 use std::{path::PathBuf, sync::{atomic::AtomicBool, Arc}};
 
 use axum::{http::StatusCode, response::{IntoResponse, Response}, routing::get};
+use datarace_dashboard_spec::Dashboard;
 use log::{debug, error, info};
 use tokio::{fs, net::TcpListener};
 
@@ -71,7 +72,7 @@ async fn get_dashboard_folder(datastore: DataStoreLocked) -> Result<PathBuf, FsR
 }
 
 // Returns a certain dashboard by name
-async fn get_dashboard(datastore: DataStoreLocked, path: String) -> Result<dashboard::Dashboard, FsResourceError> {
+async fn get_dashboard(datastore: DataStoreLocked, path: String) -> Result<Dashboard, FsResourceError> {
     let mut folder = get_dashboard_folder(datastore).await?;
 
     folder.push(path.as_str());
@@ -80,7 +81,7 @@ async fn get_dashboard(datastore: DataStoreLocked, path: String) -> Result<dashb
     read_dashboard_from_path(folder).await
 }
 
-async fn read_dashboard_from_path(folder: PathBuf) -> Result<dashboard::Dashboard, FsResourceError> {
+async fn read_dashboard_from_path(folder: PathBuf) -> Result<Dashboard, FsResourceError> {
     if !folder.exists() {
         return Err(FsResourceError::DoesNotExist);
     }

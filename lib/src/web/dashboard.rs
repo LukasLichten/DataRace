@@ -1,7 +1,7 @@
-use hashbrown::HashSet;
 use log::error;
-use maud::{html, Markup, PreEscaped, Render, DOCTYPE};
-use serde::{Deserialize, Serialize};
+use maud::{html, Markup, PreEscaped, DOCTYPE};
+
+use datarace_dashboard_spec::{Dashboard, DashElement, DashElementType, Property};
 
 use crate::PropertyHandle;
 
@@ -13,36 +13,28 @@ fn header(name: &String) -> Markup {
     }
 } 
 
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct Dashboard {
-    pub(crate) name: String,
-    pub(crate) elements: Vec<DashElement>,
-    pub(crate) size_x: i32,
-    pub(crate) size_y: i32
+pub(crate) trait StaticHtml {
+    fn generate_html(&self) -> Markup;
 }
 
-impl Dashboard {
-    pub(crate) fn list_properties(&self) -> HashSet<PropertyHandle> {
-        let mut res = HashSet::<PropertyHandle>::new();
-
-        for e in &self.elements {
-            res.extend(e.list_properties());
-        }
-
-        res
-    }
+pub(crate) trait DynamicJs {
+    fn generate_resize_js(&self) -> Markup;
+    fn generate_update_js(&self) -> Markup;
 }
 
-impl Render for Dashboard {
-    fn render(&self) -> Markup {
-    
+impl StaticHtml for Dashboard {
+    fn generate_html(&self) -> Markup {
         let mut names = vec![];
         for e in &self.elements {
-            if !e.gather_names(&mut names) {
-                error!("Failed to render Dashboard {} due to element name issues!", self.name);
-                return html!{
-                    (header(&"Error!".to_string()))
-                };
+            names = match e.gather_names(names) {
+                Ok(list) => list,
+                Err(err) => {
+                    let out = format!("Failed to render Dashboard {} due to element name issues:\n{}", self.name, err);
+                    error!("{}", &out);
+                    return html!{
+                        (header(&out))
+                    };
+                }
             }
         }
 
@@ -51,7 +43,7 @@ impl Render for Dashboard {
             body {
                 div id="BODY" style=(format!("position: absolute; left: 0px; top: 0px; width: {}px; height: {}px;", self.size_x, self.size_y)) {
                     @for item in &self.elements {
-                        (item)
+                        (item.generate_html())
                     }
                 }
                 div id="DISCO" style="position: absolute; left: 0px; top: 0px; width: 100%; height: 100%; display: none; background-color: #F2F2F288;" {
@@ -158,20 +150,9 @@ impl Render for Dashboard {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct DashElement {
-    pub(crate) name: String,
-    pub(crate) x: Property<i64>,
-    pub(crate) y: Property<i64>,
-    pub(crate) size_x: Property<i64>,
-    pub(crate) size_y: Property<i64>,
-    pub(crate) visible: Property<bool>,
-    pub(crate) element: DashElementType,
-}
-
-impl Render for DashElement {
-    fn render(&self) -> Markup {
-        let name = if let Some(n) = self.normalize_name() {
+impl StaticHtml for DashElement {
+    fn generate_html(&self) -> Markup {
+        let name = if let Ok(n) = self.normalize_name() {
             n
         } else {
             return html!();
@@ -186,7 +167,7 @@ impl Render for DashElement {
                     },
                     DashElementType::Folder(elements) => {
                         @for item in elements {
-                            (item)
+                            (item.generate_html())
                         }
                     },
                     DashElementType::Text(text) => {
@@ -198,78 +179,9 @@ impl Render for DashElement {
     }
 }
 
-impl DashElement {
-    /// Names are reformated to lower case, but are also checked to insure requirements:
-    /// ascii alphanumeric with additionally _
-    fn normalize_name(&self) -> Option<String> {
-        let name = self.name.to_lowercase();
-        
-        if !name.chars().all(|x| x.is_ascii_digit() || x.is_ascii_lowercase() || x == '_') {
-            error!("Unable to render dashboard: Name '{}' containes illegal characters (only ascii alphabet, numbers and _ permitted)", name);
-            return None;
-        }
-
-        return Some(name);
-    }
-
-    /// Gathers up the name of this element (and any potential sub elements)
-    /// and insures there are no name collisions
-    fn gather_names(&self, list: &mut Vec<String>) -> bool {
-        let name = if let Some(n) = self.normalize_name() {
-            n
-        } else {
-            return false;
-        };
-
-        if list.contains(&name) {
-            error!("Unable to render dashboard: Unique Name violated with name '{}'", name);
-            return false;
-        }
-
-        list.push(name);
-
-        if let DashElementType::Folder(elements) = &self.element {
-            for e in elements {
-                if !e.gather_names(list) {
-                    return false;
-                }
-            }
-        }
-
-        true
-    }
-    
-    /// Returns a list of all properties used in scripts for this element
-    /// and all elements contained in it
-    fn list_properties(&self) -> HashSet<PropertyHandle> {
-        let mut res = HashSet::<PropertyHandle>::new();
-
-        match &self.element {
-            DashElementType::Folder(elements) => {
-                for e in elements {
-                    res.extend(e.list_properties());
-                }
-            },
-            DashElementType::Square(_) => {
-
-            },
-            DashElementType::Text(text) => {
-                text.add_property_handle_to_collection(&mut res);
-            }
-        }
-
-        self.x.add_property_handle_to_collection(&mut res);
-        self.y.add_property_handle_to_collection(&mut res);
-        self.size_x.add_property_handle_to_collection(&mut res);
-        self.size_y.add_property_handle_to_collection(&mut res);
-        self.visible.add_property_handle_to_collection(&mut res);
-
-
-        res
-    }
-
+impl DynamicJs for DashElement {
     fn generate_update_js(&self) -> Markup {
-        let name = if let Some(n) = self.normalize_name() {
+        let name = if let Ok(n) = self.normalize_name() {
             n
         } else {
             return html!();
@@ -279,7 +191,7 @@ impl DashElement {
             "{"
                 // Handling visibility
                 @if self.visible.is_computed() {
-                    (PreEscaped(format!("if({})", self.visible.generate_read_js())))
+                    (PreEscaped(format!("if({})", self.visible.generate_read_js().into_string())))
                     "{"
                          (format!("{}.style.display = 'block';", name.as_str()))
                     "} else {"
@@ -306,7 +218,7 @@ impl DashElement {
                         // (PreEscaped(format!("console.log(DATA.get({}).Int == null);", serde_json::to_string(&text.get_property_handle()).unwrap())))
 
                         @if text.is_computed() {
-                            (PreEscaped(format!("{}.firstElementChild.textContent = {};", name.as_str(), text.generate_read_js())))
+                            (PreEscaped(format!("{}.firstElementChild.textContent = {};", name.as_str(), text.generate_read_js().into_string())))
                         }
                     }
                 } 
@@ -315,7 +227,7 @@ impl DashElement {
     }
 
     fn generate_resize_js(&self) -> Markup {
-        let name = if let Some(n) = self.normalize_name() {
+        let name = if let Ok(n) = self.normalize_name() {
             n
         } else {
             return html!();
@@ -325,10 +237,10 @@ impl DashElement {
             // We are in the resize function already,
             // we have access to the update scale value to apply to all dimensions
             "{"
-                (PreEscaped(format!("let offset_x = {} * SCALE;", self.x.generate_read_js())))
-                (PreEscaped(format!("let offset_y = {} * SCALE;", self.y.generate_read_js())))
-                (PreEscaped(format!("let scale_x = {} * SCALE;", self.size_x.generate_read_js())))
-                (PreEscaped(format!("let scale_y = {} * SCALE;", self.size_y.generate_read_js())))
+                (PreEscaped(format!("let offset_x = {} * SCALE;", self.x.generate_read_js().into_string())))
+                (PreEscaped(format!("let offset_y = {} * SCALE;", self.y.generate_read_js().into_string())))
+                (PreEscaped(format!("let scale_x = {} * SCALE;", self.size_x.generate_read_js().into_string())))
+                (PreEscaped(format!("let scale_y = {} * SCALE;", self.size_y.generate_read_js().into_string())))
 
                 (format!("{}.style.left = offset_x + 'px';", name.as_str()))
                 (format!("{}.style.top = offset_y + 'px';", name.as_str()))
@@ -349,212 +261,141 @@ impl DashElement {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) enum DashElementType {
-    Square(String),
-    Text(Property<String>),
-    Folder(Vec<DashElement>)
+/// Trait that provides the js for Dashboard Properties for reading and parsing the value into the
+/// selected type
+trait DynamicReadJs {
+    fn generate_read_js(&self) -> PreEscaped<String>;
 }
 
-
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) enum Property<T> {
-    Fixed(T),
-    Computed(String),
-
-    // Formater function code has the following issues:
-    // - Syntax errors result in Dashboard not running in general 
-    // - Code can (likely) access variables, like Dashboard elements, and break the dashboard
-    Formated{ source: String, formater: String },
-
-    Deref{ source: String, index: Box<Property<i64>> }
+/// Generates the Data.get() call for the handle
+trait HandleReadJs {
+    fn generate_handle_js(&self) -> Option<String>;
 }
 
-impl Property<bool> {
-    fn generate_read_js(&self) -> String {
-        match self {
+impl DynamicReadJs for Property<bool> {
+    fn generate_read_js(&self) -> PreEscaped<String> {
+        let handle = match self.generate_handle_js() {
+            Some(h) => h,
+            None => {
+                return if let Property::Fixed(val) = self {
+                    PreEscaped(val.to_string())
+                } else {
+                    PreEscaped(self.get_static_value().to_string())
+                };
+            }
+        };
+
+        PreEscaped(match self {
             Property::Fixed(val) => {
                 val.to_string()
             },
             Property::Computed(_) => {
-                if let Some(res) = self.gen_handle_js() {
-                    format!("read_bool({})", res)
-                } else {
-                    self.get_static_value().to_string()
-                }
+                format!("read_bool({})", handle)
             },
             Property::Formated { source: _, formater } => {
-                if let Some(res) = self.gen_handle_js() {
-                    format!("parse_to_bool(pass_into({}, function(value) {{ {} }}))", res, formater)
-                } else {
-                    self.get_static_value().to_string()
-                }
+                format!("parse_to_bool(pass_into({}, function(value) {{ {} }}))", handle, formater)
             },
             Property::Deref { source: _, index } => {
-                if let Some(res) = self.gen_handle_js() {
-                    format!("read_bool(read_arr({},{}))", res, index.generate_read_js())
-                } else {
-                    self.get_static_value().to_string()
-                }
+                format!("read_bool(read_arr({},{}))", handle, index.generate_read_js().into_string())
             }
-        }
+        })
     }
 }
 
-impl Property<i64> {
-    fn generate_read_js(&self) -> String {
-        match self {
+impl DynamicReadJs for Property<i64> {
+    fn generate_read_js(&self) -> PreEscaped<String> {
+        let handle = match self.generate_handle_js() {
+            Some(h) => h,
+            None => {
+                return if let Property::Fixed(val) = self {
+                    PreEscaped(val.to_string())
+                } else {
+                    PreEscaped(self.get_static_value().to_string())
+                };
+            }
+        };
+
+        PreEscaped(match self {
             Property::Fixed(val) => {
                 val.to_string()
             },
             Property::Computed(_) => {
-                if let Some(res) = self.gen_handle_js() {
-                    format!("read_int({})", res)
-                } else {
-                    self.get_static_value().to_string()
-                }
+                format!("read_int({})", handle)
             },
             Property::Formated { source: _, formater } => {
-                if let Some(res) = self.gen_handle_js() {
-                    format!("parse_to_int(pass_into({}, function(value) {{ {} }}))", res, formater)
-                } else {
-                    self.get_static_value().to_string()
-                }
+                format!("parse_to_int(pass_into({}, function(value) {{ {} }}))", handle, formater)
             },
             Property::Deref { source: _, index } => {
-                if let Some(res) = self.gen_handle_js() {
-                    format!("read_int(read_arr({},{}))", res, index.generate_read_js())
-                } else {
-                    self.get_static_value().to_string()
-                }
+                format!("read_int(read_arr({},{}))", handle, index.generate_read_js().into_string())
             }
-        }
+        })
     }
 }
 
-impl Property<f64> {
-    #[allow(dead_code)]
-    fn generate_read_js(&self) -> String {
-        match self {
+impl DynamicReadJs for Property<f64> {
+    fn generate_read_js(&self) -> PreEscaped<String> {
+        let handle = match self.generate_handle_js() {
+            Some(h) => h,
+            None => {
+                return if let Property::Fixed(val) = self {
+                    PreEscaped(val.to_string())
+                } else {
+                    PreEscaped(self.get_static_value().to_string())
+                };
+            }
+        };
+
+        PreEscaped(match self {
             Property::Fixed(val) => {
                 val.to_string()
             },
             Property::Computed(_) => {
-                if let Some(res) = self.gen_handle_js() {
-                    format!("read_float({})", res)
-                } else {
-                    self.get_static_value().to_string()
-                }
+                format!("read_float({})", handle)
             },
             Property::Formated { source: _, formater } => {
-                if let Some(res) = self.gen_handle_js() {
-                    format!("parse_to_float(pass_into({}, function(value) {{ {} }}))", res, formater)
-                } else {
-                    self.get_static_value().to_string()
-                }
+                format!("parse_to_float(pass_into({}, function(value) {{ {} }}))", handle, formater)
             },
             Property::Deref { source: _, index } => {
-                if let Some(res) = self.gen_handle_js() {
-                    format!("read_float(read_arr({},{}))", res, index.generate_read_js())
-                } else {
-                    self.get_static_value().to_string()
-                }
+                format!("read_float(read_arr({},{}))", handle, index.generate_read_js().into_string())
             }
-        }
+        })
     }
 }
 
-impl Property<String> {
-    fn generate_read_js(&self) -> String {
-        match self {
+impl DynamicReadJs for Property<String> {
+    fn generate_read_js(&self) -> PreEscaped<String> {
+        let handle = match self.generate_handle_js() {
+            Some(h) => h,
+            None => {
+                return if let Property::Fixed(val) = self {
+                    PreEscaped(val.to_string())
+                } else {
+                    PreEscaped(self.get_static_value().to_string())
+                };
+            }
+        };
+
+        PreEscaped(match self {
             Property::Fixed(val) => {
-                format!("'{}'", val)
+                val.to_string()
             },
             Property::Computed(_) => {
-                if let Some(res) = self.gen_handle_js() {
-                    format!("read_string({})", res)
-                } else {
-                    self.get_static_value().to_string()
-                }
+                format!("read_string({})", handle)
             },
             Property::Formated { source: _, formater } => {
-                if let Some(res) = self.gen_handle_js() {
-                    format!("pass_into({}, function(value) {{ {} }}).toString()", res, formater)
-                } else {
-                    self.get_static_value().to_string()
-                }
+                format!("pass_into({}, function(value) {{ {} }}).toString()", handle, formater)
             },
             Property::Deref { source: _, index } => {
-                if let Some(res) = self.gen_handle_js() {
-                    format!("read_string(read_arr({},{}))", res, index.generate_read_js())
-                } else {
-                    self.get_static_value().to_string()
-                }
+                format!("read_string(read_arr({},{}))", handle, index.generate_read_js().into_string())
             }
-        }
+        })
     }
 }
 
-impl<T> Property<T> {
-    fn gen_handle_js(&self) -> Option<String> {
-        if let Some(handle) = self.get_property_handle() {
-            let serial = serde_json::to_string(&handle).ok()?;
-            Some(format!("DATA.get({})", serial))
-            
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn get_property_handle(&self) -> Option<PropertyHandle> {
-        match self {
-            Property::Fixed(_) => {
-                None
-            },
-            Property::Computed(handle) => {
-                PropertyHandle::new(handle.as_str())
-            },
-            Property::Formated { source, formater: _ } => {
-                PropertyHandle::new(source.as_str())
-            },
-            Property::Deref { source, index: _ } => {
-                PropertyHandle::new(source.as_str())
-            }
-        }
-
-    }
-
-    pub(crate) fn is_computed(&self) -> bool {
-        match self {
-            Property::Fixed(_) => false,
-            _ => true,
-        }
-    }
-
-    pub(crate) fn add_property_handle_to_collection(&self, set: &mut HashSet<PropertyHandle>) {
-        if let Some(res) = self.get_property_handle() {
-            set.insert(res);
-
-            if let Property::Deref { source: _, index } = self {
-                index.add_property_handle_to_collection(set);
-            }
-        }
-    }
-}
-
-impl<T> Property<T> where T: Default + Clone {
-    pub(crate) fn get_static_value(&self) -> T {
-        match self {
-            Property::Fixed(res) => res.clone(),
-            Property::Computed(_) => {
-                T::default()
-            },
-            Property::Formated { source: _, formater: _ } => {
-                T::default()
-            },
-            Property::Deref { source: _, index: _ } => {
-                T::default()
-            }
-        }
+impl<T> HandleReadJs for Property<T> {
+    fn generate_handle_js(&self) -> Option<String> {
+        let handle = PropertyHandle::new(self.get_property_handle()?.as_str())?;
+        let serial = serde_json::to_string(&handle).ok()?;
+        Some(format!("DATA.get({})", serial))
     }
 }

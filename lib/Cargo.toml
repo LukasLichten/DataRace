@@ -34,3 +34,4 @@ socketioxide = { version = "0.10.2", features = ["state"] }
 atomic-wait = "1.1.0"
 futures-lite = "2.3"
 maud = { version = "*", features = ["axum"] }
+datarace_dashboard_spec = { path = "../dashboard_spec" }

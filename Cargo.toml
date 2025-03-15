@@ -1,4 +1,4 @@
 [workspace]
-members = ["lib","launcher","plugin_api_sys","plugin_api","plugin_api_macro","sample_plugin"]
+members = ["lib","launcher","plugin_api_sys","plugin_api","plugin_api_macro","sample_plugin", "dashboard_spec"]
 default-members = ["launcher"]
 resolver = "2"

@@ -1,0 +1,12 @@
+[package]
+name = "datarace_dashboard_spec"
+version = "0.1.0"
+edition = "2021"
+authors = ["Lukas 'DerGeneralFluff' Lichten"]
+license = "GPL-3.0"
+repository = "https://github.com/LukasLichten/DataRace"
+description = "Defines the structs for Dashboards"
+
+[dependencies]
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = "^1.0"

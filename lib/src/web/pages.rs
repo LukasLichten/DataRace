@@ -1,15 +1,15 @@
 use std::str::FromStr;
 
 use axum::{extract::{Path, State}, response::{IntoResponse, Response}};
+use datarace_dashboard_spec::{DashElement, Dashboard, Property};
 use log::error;
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 use tokio::fs::{self, DirEntry};
 
-use crate::utils::{Value, ValueCache};
+use crate::{utils::{Value, ValueCache}, web::dashboard::StaticHtml};
 
 use super::{utils::DataStoreLocked, FsResourceError};
 
-use super::dashboard::*;
 
 #[allow(dead_code)]
 pub(super) async fn serve_asset(file: &str) -> PreEscaped<String> {
@@ -223,7 +223,7 @@ pub(super) async fn settings() -> Markup {
 
 pub(super) async fn load_dashboard(Path(path): Path<String>, State(datastore): State<DataStoreLocked>) -> Response {
     match super::get_dashboard(datastore, path.clone()).await {
-        Ok(dash) => html!{ (dash) }.into_response(),
+        Ok(dash) => html!{ (dash.generate_html()) }.into_response(),
         Err(e) => e.into_response(path)
     }
 }
@@ -243,7 +243,7 @@ pub(super) async fn edit_dashboard(Path(path): Path<String>, State(datastore): S
                 size_x: Property::Fixed(500),
                 size_y: Property::Fixed(400),
                 visible: Property::Fixed(true),
-                element: super::dashboard::DashElementType::Square("red".to_string()) 
+                element: datarace_dashboard_spec::DashElementType::Square("red".to_string()) 
             }]
     };
 
