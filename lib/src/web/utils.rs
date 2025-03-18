@@ -7,12 +7,17 @@ use crate::datastore::DataStore;
 
 pub(super) type DataStoreLocked = &'static RwLock<DataStore>;
 pub(super) type SocketDataRef = &'static SocketData;
+pub(crate) type WebSocketChReceiver = AsyncReceiver<SocketChMsg>;
 
 #[derive(Debug, Clone)]
 pub(super) enum Auth {
     Dashboard(String),
     #[allow(dead_code)]
     Plugin(u64, Arc<String>)
+} 
+
+pub(crate) fn create_websocket_channel() -> (AsyncSender<SocketChMsg>, WebSocketChReceiver) {
+    kanal::unbounded_async()
 }
 
 pub(super) struct SocketData {
@@ -22,9 +27,12 @@ pub(super) struct SocketData {
 }
 
 impl SocketData {
-    pub(super) fn new(datastore: DataStoreLocked) -> (SocketDataRef, AsyncReceiver<SocketChMsg>) {
-        let (sx, rx) = kanal::unbounded_async();
-        (Box::leak(
+    pub(super) async fn new(datastore: DataStoreLocked) -> SocketDataRef {
+        let ds_r = datastore.read().await;
+        let sx = ds_r.get_websocket_channel().clone();
+        drop(ds_r);
+
+        Box::leak(
             Box::new(
                 SocketData {
                     datastore,
@@ -32,7 +40,7 @@ impl SocketData {
                     sender: sx
                 }
             )
-        ), rx)
+        )
     }
 
     pub(super) async fn insert_auth(&self, id: Sid, auth: Auth) {
@@ -75,7 +83,8 @@ impl SocketData {
 }
 
 /// Serves as the Messaging Protocol of the Socket.io Server Channel
-pub(super) enum SocketChMsg {
+pub(crate) enum SocketChMsg {
     AddDashboard(String),
-    RmDashboard(String)
+    RmDashboard(String),
+    ChangedProperty(crate::PropertyHandle, crate::utils::ValueContainer)
 }

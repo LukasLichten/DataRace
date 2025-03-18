@@ -7,14 +7,16 @@ use tokio::{fs, net::TcpListener};
 
 use utils::DataStoreLocked;
 
+pub(crate) use utils::{SocketChMsg, WebSocketChReceiver, create_websocket_channel};
+
 mod utils;
 mod socket;
 mod pages;
 mod dashboard;
 
-pub(crate) async fn run_webserver(datastore: DataStoreLocked, shutdown: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) async fn run_webserver(datastore: DataStoreLocked, websocket_ch_recv: WebSocketChReceiver, shutdown: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
     debug!("Setting up webserver...");
-    let layer = socket::create_socketio_layer(datastore).await;
+    let layer = socket::create_socketio_layer(datastore, websocket_ch_recv).await;
 
     let app = axum::Router::new()
         .route("/", get(pages::index))

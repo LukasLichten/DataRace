@@ -374,7 +374,7 @@ impl ValueContainer {
     }
 
     /// This generates a shallow clone, which still receives all the same value changes
-    fn shallow_clone(&self) -> ValueContainer {
+    pub(crate) fn shallow_clone(&self) -> ValueContainer {
         match self {
             ValueContainer::None => ValueContainer::None,
             ValueContainer::Int(a) => ValueContainer::Int(a.clone()),

@@ -10,7 +10,7 @@ build-exec:
 	cargo build --release
 
 run:
-	./target/release/launch_datarace
+	LD_LIBRARY_PATH=./target/release/ ./target/release/launch_datarace
 
 plugin-api:
 	cd lib && cargo build --release

@@ -56,7 +56,8 @@ async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
     info!("Launching DataRace version {}.{}.{} (apiversion: {})...", built_info::PKG_VERSION_MAJOR, built_info::PKG_VERSION_MINOR, built_info::PKG_VERSION_PATCH, API_VERSION);
 
     let (event_loop, event_channel) = events::create_event_task();
-    let datastore: &'static tokio::sync::RwLock<datastore::DataStore>  = Box::leak(Box::new(datastore::DataStore::new(event_channel)));
+    let (websocket_ch_sender, websocket_channel_recv) = web::create_websocket_channel();
+    let datastore: &'static tokio::sync::RwLock<datastore::DataStore>  = Box::leak(Box::new(datastore::DataStore::new(event_channel, websocket_ch_sender)));
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let sh_clone = shutdown.clone();
@@ -99,7 +100,7 @@ async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
         debug!("All Plugins have shut down");
     });
 
-    web::run_webserver(datastore, sh_clone).await?;
+    web::run_webserver(datastore, websocket_channel_recv, sh_clone).await?;
 
     // Stops the Runtime from closing when plugins are still running
     let _ = handle.await;

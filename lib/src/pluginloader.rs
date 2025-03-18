@@ -13,7 +13,7 @@ use crate::{api_types, datastore::DataStore, events::EventMessage, utils::{self,
 pub(crate) async fn load_all_plugins(datastore: &'static tokio::sync::RwLock<DataStore>) -> Result<JoinSet<Result<(),String>>,Box<dyn std::error::Error>> {
     let (plugin_folder, event_channel) = {
         let ds_r = datastore.read().await;
-        (ds_r.get_config().get_plugin_folder(), ds_r.get_event_channel())
+        (ds_r.get_config().get_plugin_folder(), ds_r.get_event_channel().clone())
     };
 
     if !plugin_folder.is_dir() {
@@ -400,7 +400,7 @@ async fn create_property(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64,
     // We write into datastore the property too
     let prop = PropertyHandle { plugin: handle.id, property: id };
     let mut ds_w = handle.datastore.write().await;
-    ds_w.set_property(prop.clone(), val_container);
+    ds_w.set_property(prop.clone(), val_container).await;
     ds_w.register_property_name(prop, prop_name);
     drop(ds_w);
 
@@ -419,7 +419,7 @@ async fn property_type_change(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id:
         let prop = PropertyHandle { plugin: handle.id, property: id };
         
         let mut ds_w = handle.datastore.write().await;
-        ds_w.set_property(prop, cont.clone_container());
+        ds_w.set_property(prop, cont.clone_container()).await;
         drop(ds_w); // We could rewrite send_message to take the mutexguard... or not
         // But we have to drop it so the send can achieve lock
 
@@ -448,7 +448,7 @@ async fn delete_property(wrapper: &PluginWrapper, ptr: &mut PtrWrapper, id: u64)
     // Technically we can unlock while sending messages, practically we have to see if there is any gain
     let prop = PropertyHandle { plugin: handle.id, property: id };
     let mut ds_w = handle.datastore.write().await;
-    ds_w.delete_property(&prop);
+    ds_w.delete_property(&prop).await;
     drop(ds_w); // We could rewrite send_message to take the mutexguard... or not
     // we do have to drop it, it could else never secure lock
     

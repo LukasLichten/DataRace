@@ -1,16 +1,20 @@
 use hashbrown::HashMap;
-use tokio::time::{self, Duration, Instant};
-use kanal::AsyncReceiver;
+use tokio::time::Duration;
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
 use socketioxide::{extract::{Data, SocketRef, State}, SocketIo};
 
-use crate::{utils::{Value, ValueCache}, PropertyHandle};
+use crate::{utils::{Value, ValueCache, ValueContainer}, PropertyHandle};
 
-use super::utils::{DataStoreLocked, SocketChMsg, SocketDataRef};
+use super::{utils::{DataStoreLocked, SocketChMsg, SocketDataRef}, WebSocketChReceiver};
 
-pub(super) async fn create_socketio_layer(datastore: DataStoreLocked) -> socketioxide::layer::SocketIoLayer {
-    let (store,rx) = super::utils::SocketData::new(datastore);
+pub(super) async fn create_socketio_layer(datastore: DataStoreLocked, websocket_ch_recv: WebSocketChReceiver) -> socketioxide::layer::SocketIoLayer {
+    let store = super::utils::SocketData::new(datastore).await;
+
+    // We empty the queue, as likely a bunch of property creations have flooded the queue 
+    while !websocket_ch_recv.is_empty() {
+        let _ = websocket_ch_recv.recv().await;
+    }
 
     let (layer, io) = SocketIo::builder()
         .with_state(store)
@@ -18,7 +22,7 @@ pub(super) async fn create_socketio_layer(datastore: DataStoreLocked) -> socketi
 
     io.ns("/", on_connect);
 
-    tokio::task::spawn(update(io, store, rx));
+    tokio::task::spawn(update(io, store, websocket_ch_recv));
 
     layer
 }
@@ -77,34 +81,27 @@ const UPDATE_RATE: Duration = Duration::from_millis(10);
 
 type UpdatePackage = Vec<(PropertyHandle, Value)>;
 
-async fn update(io: SocketIo, datastore: SocketDataRef, rx: AsyncReceiver<SocketChMsg>) {
-    let mut props = HashMap::<PropertyHandle, (ValueCache, Vec<String>)>::new();
+async fn update(io: SocketIo, datastore: SocketDataRef, rx: WebSocketChReceiver) {
+    let mut props = HashMap::<PropertyHandle, (ValueContainer, ValueCache, Vec<String>)>::new();
     let mut cache = HashMap::<String, (UpdatePackage, usize)>::new();
 
-    loop {
-        // Timing start
-        let update_cycle_end_time = Instant::now() + UPDATE_RATE;
+    let mut interval = tokio::time::interval(UPDATE_RATE);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
 
+    loop {
         // Code start, aquiring messages
-        if let Ok(Some(msg)) = rx.try_recv() {
-            process_msg(msg, datastore, &mut props, &mut cache).await;
+        while let Ok(Some(msg)) = rx.try_recv() {
+            let do_more = process_msg(msg, datastore, &mut props, &mut cache).await;
+            if !do_more {
+                break;
+            }
         }
 
         // Updating
-        let ds_r = datastore.datastore.read().await;
-        for (handle, (value_cache, dashes)) in props.iter_mut() {
-            let new = if let Some(cont) = ds_r.get_property_container(handle) {
-                cont.read_web(value_cache)
-            } else {
-                if value_cache.value != Value::None {
-                    value_cache.value = Value::None;
-                    true
-                } else {
-                    false
-                }
-            };
+        for (handle, (container, value_cache, dashes)) in props.iter_mut() {
+            let new_data = container.read_web(value_cache);
             
-            if new {
+            if new_data {
                 let val = if let Some(arr) = &value_cache.change {
                     Value::ArrUpdate(arr.clone())
                 } else {
@@ -118,7 +115,6 @@ async fn update(io: SocketIo, datastore: SocketDataRef, rx: AsyncReceiver<Socket
                 }
             }
         }
-        drop(ds_r);
 
         // Sending
         for (name, (list, _)) in cache.iter_mut() {
@@ -134,16 +130,16 @@ async fn update(io: SocketIo, datastore: SocketDataRef, rx: AsyncReceiver<Socket
         }
 
         // Sleeping to keep the update rate
-        time::sleep_until(update_cycle_end_time).await;
+        interval.tick().await;
     }
 }
 
 async fn process_msg(
     msg: SocketChMsg,
     datastore: SocketDataRef,
-    props: &mut HashMap<PropertyHandle, (ValueCache, Vec<String>)>,
-    cache: &mut HashMap<String, (UpdatePackage, usize)>
-) {
+    props: &mut HashMap<PropertyHandle, (ValueContainer, ValueCache, Vec<String>)>,
+    cache: &mut HashMap<String, (UpdatePackage, usize)>,
+) -> bool {
     // debug!("Socket updater received message");
     match msg {
         SocketChMsg::AddDashboard(name) => {
@@ -152,7 +148,7 @@ async fn process_msg(
 
                 for p in list {
                     if let Some(prop_handle) = PropertyHandle::new(p.as_str()) {
-                        if let Some((value_cache, dashes)) = props.get_mut(&prop_handle) {
+                        if let Some((_, value_cache, dashes)) = props.get_mut(&prop_handle) {
                             *value_cache = ValueCache::default(); // Forces a refresh
                             
                             if !dashes.contains(&name) {
@@ -160,7 +156,16 @@ async fn process_msg(
                                 dashes.push(name.clone());
                             }
                         } else {
-                            props.insert(prop_handle, (ValueCache::default(), vec![name.clone()]));
+                            let ds_r = datastore.datastore.read().await;
+
+                            let cont = if let Some(cont) = ds_r.get_property_container(&prop_handle) {
+                                cont.shallow_clone()
+                            } else {
+                                ValueContainer::None
+                            };
+                            drop(ds_r);
+
+                            props.insert(prop_handle, (cont, ValueCache::default(), vec![name.clone()]));
                         }
                     }
                 }
@@ -173,6 +178,8 @@ async fn process_msg(
             } else {
                 error!("Dashboard {} tried to connect to websocket, but was unable to load file to start update (Did you delete the Dashboard?)", name);
             }
+
+            false
         },
         SocketChMsg::RmDashboard(name) => {
             if let Some((_, count)) = cache.get_mut(&name) {
@@ -185,7 +192,7 @@ async fn process_msg(
                     let mut removal = Vec::<PropertyHandle>::new();
 
                     // Removing dash from the update list of every property
-                    for (handle, (_, dashes)) in props.iter_mut() {
+                    for (handle, (_, _, dashes)) in props.iter_mut() {
                         dashes.retain(|d| d != &name);
 
                         if dashes.is_empty() {
@@ -200,7 +207,15 @@ async fn process_msg(
                     
                 }
             }
-            
+
+            false
+        },
+        SocketChMsg::ChangedProperty(handle, container) => {
+            if let Some((cont, _, _)) = props.get_mut(&handle) {
+                *cont = container;
+            }
+
+            true
         }
     }
 }

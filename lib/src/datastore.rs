@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 use kanal::{AsyncSender, Sender};
 use hashbrown::HashMap;
 
-use crate::{events::EventMessage, pluginloader::LoaderMessage, utils::{PluginStatus, ValueContainer}, DataStoreReturnCode, PluginHandle, PropertyHandle};
+use crate::{events::EventMessage, pluginloader::LoaderMessage, utils::{PluginStatus, ValueContainer}, web::SocketChMsg, DataStoreReturnCode, PluginHandle, PropertyHandle};
 
 /// This is our centralized State
 pub(crate) struct DataStore {
@@ -22,11 +22,12 @@ pub(crate) struct DataStore {
     
     shutdown: bool,
 
-    event_channel: kanal::Sender<EventMessage>
+    event_channel: kanal::Sender<EventMessage>,
+    websocket_channel: kanal::AsyncSender<SocketChMsg>
 }
 
 impl DataStore {
-    pub fn new(event_channel: kanal::Sender<EventMessage>) -> RwLock<DataStore> {
+    pub fn new(event_channel: kanal::Sender<EventMessage>, websocket_channel: kanal::AsyncSender<SocketChMsg>) -> RwLock<DataStore> {
         RwLock::new(DataStore {
             plugins: HashMap::default(),
             properties: HashMap::default(),
@@ -34,7 +35,8 @@ impl DataStore {
             config: Config::default(),
             // task_map: HashMap::default(),
             shutdown: false,
-            event_channel
+            event_channel,
+            websocket_channel
         })
     }
 
@@ -88,8 +90,12 @@ impl DataStore {
 
     } 
 
-    pub(crate) fn get_event_channel(&self) -> Sender<EventMessage> {
-        self.event_channel.clone()
+    pub(crate) fn get_event_channel<'a>(&'a self) -> &'a Sender<EventMessage> {
+        &self.event_channel
+    }
+
+    pub(crate) fn get_websocket_channel<'a>(&'a self) -> &'a AsyncSender<SocketChMsg> {
+        &self.websocket_channel
     }
 
     pub(crate) fn count_plugins(&self) -> usize {
@@ -121,8 +127,9 @@ impl DataStore {
 
     /// This creates/replaces a properties value container
     /// There is no check if this plugin is allowed to edit this property, so use carefully
-    pub(crate) fn set_property(&mut self, handle: PropertyHandle, val: ValueContainer) {
-        self.properties.insert(handle, val);
+    pub(crate) async fn set_property(&mut self, handle: PropertyHandle, val: ValueContainer) {
+        self.properties.insert(handle, val.shallow_clone());
+        let _ = self.websocket_channel.send(SocketChMsg::ChangedProperty(handle, val)).await;
     }
 
     /// Serves for displaying the property name
@@ -136,14 +143,16 @@ impl DataStore {
     }
 
     /// Retrieves a reference to the valuecontainer (if present)
-    /// There are again no checks, you should only read the values contained
+    /// There are again no checks if you (plugin etc) are allowed to edit this value, 
+    /// so you should only read the values contained
     pub(crate) fn get_property_container<'a>(&'a self, handle: &PropertyHandle) -> Option<&'a ValueContainer> {
         self.properties.get(handle)
     }
 
     /// Deletes the Property (only if it exists) with no further checks
-    pub(crate) fn delete_property(&mut self, handle: &PropertyHandle) {
+    pub(crate) async fn delete_property(&mut self, handle: &PropertyHandle) {
         self.properties.remove(handle);
+        let _ = self.websocket_channel.send(SocketChMsg::ChangedProperty(handle.clone(), ValueContainer::None)).await;
     }
 
     pub(crate) fn count_properties(&self) -> usize {
