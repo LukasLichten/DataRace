@@ -38,12 +38,24 @@ impl DashElement {
     /// ascii alphanumeric with additionally _
     pub fn normalize_name(&self) -> Result<String, String> {
         let name = self.name.to_lowercase();
+
+        let mut non_number = 0;
         
-        if !name.chars().all(|x| x.is_ascii_digit() || x.is_ascii_lowercase() || x == '_') {
-            return Err(format!("Unable to render dashboard: Name '{}' containes illegal characters (only ascii alphabet, numbers and _ permitted)", name));
+        for x in name.chars() {
+            if x.is_ascii_digit() {
+                // This is valid, as long as there is somewhere a letter or underscor contained
+            } else if x.is_ascii_lowercase() || x == '_' { 
+                non_number += 1;
+            } else {
+                return Err(format!("Unable to render dashboard: Name '{}' containes illegal characters (only ascii alphabet, numbers and _ permitted)", name));
+            }
         }
 
-        return Ok(name);
+        if non_number > 0 {
+            return Ok(name);
+        } else {
+            return Err(format!("Unable to render dashboard: Name '{}' is only numbers, requires at least one ascii letter or _", name));
+        }
     }
 
     /// Gathers up the name of this element (and any potential sub elements)

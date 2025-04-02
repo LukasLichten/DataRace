@@ -239,6 +239,16 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
                 //     }
                 // }
 
+                if let Ok(action_handle) = datarace_plugin_api::api::generate_action_handle("sample_plugin.test") {
+                    match handle.trigger_action(action_handle, Some(vec![Property::Int(3)])) {
+                        Ok(id) => handle.log_info(format!("Triggered Action, id {}", id)),
+                        Err(_) => handle.log_error("Failed to trigger action"),
+                    }
+                } else {
+                    handle.log_error("Failed to generate action handle");
+                }
+                
+
                 // handle.delete_event(event);
                 handle.unsubscribe_event(EVENT_HANLDE);
             } else {
@@ -251,7 +261,22 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
             } else {
                 handle.log_info("Unknown Event unsubscribed OwO");
             }
-        }
+        },
+        Message::ActionRecv(action) => {
+            match action.get_action_code() {
+                datarace_plugin_api::macros::generate_action_code!("test") => {
+                    handle.log_info(format!("Action test performed, caller {}, id {}, parameters {:?}", 
+                        action.get_origin(), action.get_action_id(), action.get_parameters()));
+                    handle.action_callback(action, 0, None);
+                },
+                _ => ()
+            }
+            
+        },
+        Message::ActionCallbackRecv(callback) => {
+            handle.log_info(format!("Received Callback for Action of id {}: Retrun code {}, parameters {:?}", 
+                callback.get_action_id(), callback.get_return_code(), callback.get_parameters()));
+        },
 
 
         Message::Unknown => {

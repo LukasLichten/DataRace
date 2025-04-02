@@ -1,4 +1,4 @@
-use std::{path::PathBuf, str::FromStr};
+use std::{path::PathBuf, str::FromStr, sync::atomic::AtomicU64};
 
 use log::info;
 use serde::{Deserialize, Serialize};
@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 use kanal::{AsyncSender, Sender};
 use hashbrown::HashMap;
 
-use crate::{events::EventMessage, pluginloader::LoaderMessage, utils::{PluginStatus, ValueContainer}, web::SocketChMsg, DataStoreReturnCode, PluginHandle, PropertyHandle};
+use crate::{events::EventMessage, pluginloader::LoaderMessage, utils::{PluginStatus, ValueContainer}, web::SocketChMsg, Action, DataStoreReturnCode, PluginHandle, PropertyHandle};
 
 /// This is our centralized State
 pub(crate) struct DataStore {
@@ -19,6 +19,7 @@ pub(crate) struct DataStore {
     config: Config,
     
     // task_map: HashMap<tokio::task::Id, (u64, String)>,
+    next_action_id: AtomicU64,
     
     shutdown: bool,
 
@@ -35,6 +36,8 @@ impl DataStore {
             config: Config::default(),
             // task_map: HashMap::default(),
             shutdown: false,
+            next_action_id: AtomicU64::new(0),
+
             event_channel,
             websocket_channel
         })
@@ -89,6 +92,32 @@ impl DataStore {
         }
 
     } 
+
+    /// It is expected the action has already the correct action, origin and the params are insured to be
+    /// correctly formated.
+    /// The id is automatically set here
+    pub(crate) async fn trigger_action(&self, target_plugin: u64, mut action: Action) -> Option<u64> {
+        let id = self.next_action_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        action.id = id;
+
+        if let Some(target) = self.plugins.get(&target_plugin) {
+            if target.channel.send(LoaderMessage::Action(action)).await.is_ok() {
+                return Some(id);
+            }
+        }
+
+        None
+    }
+
+    /// It is expected the action/return code, id, origin and param are set and correctly formated.
+    /// Nothing is done besides sending it.
+    pub(crate) async fn callback_action(&self, target_plugin: u64, callback: Action) -> bool {
+        if let Some(target) = self.plugins.get(&target_plugin) {
+            target.channel.send(LoaderMessage::ActionCallback(callback)).await.is_ok()
+        } else {
+            false
+        }
+    }
 
     pub(crate) fn get_event_channel<'a>(&'a self) -> &'a Sender<EventMessage> {
         &self.event_channel

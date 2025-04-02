@@ -182,7 +182,7 @@ pub extern "C" fn free_string(ptr: *mut std::os::raw::c_char) {
 /// Generates a property handle at compiletime
 /// It will insert a PropertyHandle in this place
 ///
-/// This is perfect for propertys with static values, as this cuts the need of sending a cstring
+/// This is perfect for propertys with static values, as this cuts out the need of sending a cstring
 /// and the api hashing it during runtime.
 /// But if you need dynamics, the function by the same name is a better choice (and you can store
 /// the handle of that one too)
@@ -220,10 +220,10 @@ pub fn generate_property_handle(input: TokenStream) -> TokenStream {
     }.into_token_stream().into()
 }
 
-/// Generates a event handle at compiletime
-/// It will insert a EventHandle in this place
+/// Generates an event handle at compiletime
+/// It will insert an EventHandle in this place
 ///
-/// This is perfect for events with static values, as this cuts the need of sending a cstring
+/// This is perfect for events with static values, as this cuts out the need of sending a cstring
 /// and the api hashing it during runtime.
 /// But if you need dynamics, the function by the same name is a better choice (and you can store
 /// the handle of that one too).
@@ -258,6 +258,88 @@ pub fn generate_event_handle(input: TokenStream) -> TokenStream {
         unsafe {
             datarace_plugin_api::wrappers::EventHandle::from_values(#id, #ev)
         }
+    }.into_token_stream().into()
+}
+
+/// Generates an action handle at compiletime
+/// It will insert an ActionHandle in this place
+///
+/// This is useful for triggering well defined apis,as this cuts out the need of sending a cstring 
+/// and the api hashing it during runtime.
+/// But if you need dynamics, the function by the same name is a better choice (and you can store
+/// the handle of that one too).
+///
+/// If you want to pattern match incoming ActionRecv against your actions, then use
+/// `generate_action_code` instead.
+///
+/// Action names are not case sensitive, have to contain at least one dot, with the first dot
+/// deliminating between plugin and action (but the action part can contain further dots).
+/// You can not have any leading or trailing dots.
+#[proc_macro]
+pub fn generate_action_handle(input: TokenStream) -> TokenStream {
+    let name = parse_macro_input!(input as LitStr);
+
+    let name_val = name.value();
+    let handle = unsafe {
+        let ptr = std::ffi::CString::new(name_val).expect("name can not be converted into CString").into_raw();
+        let res = datarace_plugin_api_sys::generate_action_handle(ptr);
+
+        drop(std::ffi::CString::from_raw(ptr));
+
+        if res.code != datarace_plugin_api_sys::DataStoreReturnCode_Ok {
+            return quote_spanned! {
+                name.span() => compile_error!("invalid name")
+            }.into_token_stream().into();
+        }
+
+        res.value
+    };
+
+    let id = handle.plugin;
+    let ac = handle.action;
+
+    quote! {
+        unsafe {
+            datarace_plugin_api::wrappers::ActionHandle::from_values(#id, #ac)
+        }
+    }.into_token_stream().into()
+}
+
+/// Generates an action code at compiletime
+/// It will insert this u64 in this place, taking only the action name (you need to omit the plugin
+/// name, similar to `propertys_initor`).
+///
+/// This is primarily for pattern matching incoming ActionRecv, which cuts down on runtime
+/// overhead.
+///
+/// If you want to trigger actions you should use `generate_action_handle` instead
+///
+/// Action names are not case sensitive. As we are ommiting the plugin name part, you may use
+/// leading dots, but not trailing (and obviously as many in the middle as you please).
+#[proc_macro]
+pub fn generate_action_code(input: TokenStream) -> TokenStream {
+    let name = parse_macro_input!(input as LitStr);
+
+    let name_val = format!("macro.{}", name.value());
+    let handle = unsafe {
+        let ptr = std::ffi::CString::new(name_val).expect("name can not be converted into CString").into_raw();
+        let res = datarace_plugin_api_sys::generate_action_handle(ptr);
+
+        drop(std::ffi::CString::from_raw(ptr));
+
+        if res.code != datarace_plugin_api_sys::DataStoreReturnCode_Ok {
+            return quote_spanned! {
+                name.span() => compile_error!("invalid name")
+            }.into_token_stream().into();
+        }
+
+        res.value
+    };
+
+    let ac = handle.action;
+
+    quote! {
+        #ac
     }.into_token_stream().into()
 }
 

@@ -1,6 +1,7 @@
-use std::{mem::ManuallyDrop, sync::Arc};
+use std::{sync::Arc, usize};
 
 use libc::c_char;
+use log::error;
 use crate::utils; 
 use hashbrown::HashMap;
 
@@ -186,6 +187,37 @@ pub struct Property {
     pub value: PropertyValue
 }
 
+impl Property {
+    /// This is used internally to deallocate a Property, mostly correctly,
+    /// when it is not read in for any purpose
+    unsafe fn dealloc(self) {
+        match self.sort {
+            PropertyType::None => (),
+            PropertyType::Int => (),
+            PropertyType::Float => (),
+            PropertyType::Boolean => (),
+            PropertyType::Duration => (),
+
+            PropertyType::Array => {
+                unsafe { 
+                    let ptr = self.value.arr;
+                    if !ptr.is_null() {
+                        ptr.drop_in_place();
+                    }
+                };
+            },
+            PropertyType::Str => {
+                let ptr = unsafe {
+                    self.value.str
+                };
+
+                let str = unsafe { std::ffi::CString::from_raw(ptr) };
+                drop(str);
+            }
+        }
+    }
+}
+
 /// The type of this Property
 #[repr(u8)]
 #[derive(Debug, PartialEq)]
@@ -220,12 +252,13 @@ pub union PropertyValue {
 
 /// Handle to the array contained in a property.
 ///
-/// These are long lived references, values retrieved are always up to date.
-/// Though They have a fixed size and type, so in case of change a new array has to be created,
-/// and a new handle has to be retrieved.
+/// These are long lived references, values retrieved are always up to date, so you can use them
+/// indefintly.
+/// Except they have a fixed size and type, so if you need to change either you need to create new array,
+/// and retrieve a new handle.
 ///
 /// It is important to call `drop_array_handle` on a handle when it goes out of scope.
-/// You can produce a second handle to the same data via `clone_array_handle`.
+/// You can produce a second handle (that points to the same underlying array) use `clone_array_handle`.
 pub struct ArrayValueHandle {
     pub(crate) arr: Arc<utils::ArrayValueContainer>,
     pub(crate) allow_modify: bool
@@ -267,6 +300,8 @@ pub enum MessageType {
 
     EventTriggered = 6,
     EventUnsubscribed = 7,
+    ActionRecv = 8,
+    ActionCallback = 9,
 
     // Update = 0,
     // Removed = 1,
@@ -281,15 +316,8 @@ pub union MessageValue {
     pub internal_msg: i64,
     pub message_ptr: MessagePtr,
     pub flag: bool,
-    pub removed_property: PropertyHandle,
-    pub update: ManuallyDrop<UpdateValue>,
     pub event: EventHandle,
-}
-
-#[repr(C)]
-pub struct UpdateValue {
-    pub handle: PropertyHandle,
-    pub value: Property
+    pub action: Action
 }
 
 #[repr(C)]
@@ -298,6 +326,108 @@ pub struct MessagePtr {
     pub origin: u64,
     pub message_ptr: *mut libc::c_void,
     pub reason: i64
+}
+
+/// Action serves for both Action and ActionCallback events.
+///
+/// As an ActionRecv, the action value is the action hash from the ActionHandle.
+/// For ActionCallback, the action value is 0 for success, others are plugin defined errors.
+///
+/// Params is an Array with the size param_count. When param_count == 0, then params is null.
+///
+/// id is a unique id for this specific action event, used to trigger the callback (and to identify it).
+/// Ids are unique across all plugins, unilaterally climbing, and starts at 0 when DataRace is
+/// started.  
+/// The value could overflow, but similar to Property::Duration, even at 1 action per
+/// microsecond (unlikely to achieve such throughput), then it would overflow in 584,942 years.
+/// When actions are triggered in parallel you may receive actions with ids out of order.
+///
+/// The origin is the plugin hash of the caller.
+/// Useful for ActionRecv, but for ActionCallback you should know who you called.
+///
+/// You should send a callback for any ActionRecv, even when the action attempted to call is undefined for you.
+/// Never send a callback for an ActionCallback, as this reuses the id, and could confuse behavior.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct Action {
+    pub action: u64,
+    pub params: *mut Property,
+    pub param_count: usize,
+    pub id: u64,
+    pub origin: u64
+}
+
+// Need due to being send through loader Message
+unsafe impl Send for Action {}
+
+impl Action {
+    pub(crate) fn new(sender_plugin_id: u64, action: u64, params: *mut Property, param_count: usize) -> Self {
+        let (params, param_count) = match (params.is_null(), param_count) {
+            // Standard case for parameterless calling:
+            (true, 0) => (std::ptr::null_mut(), 0),
+            // Pointer to somewhere but 0 size? We will leak whatever this is pointing 
+            // (if anything at all) and continue with (null, 0)
+            (false, 0) => { 
+                error!("Action parameters malformed: param_count is 0 but params is not a null pointer. Ignoring params");
+                (std::ptr::null_mut(), 0)
+            },
+            // Nullpointer, paramtercount above 0, ignore parameter count
+            (true, _) => {
+                error!("Action parameters malformed: params is a null pointer, but param_counter is not 0. Ignoring param_counter");
+                (std::ptr::null_mut(), 0)
+            },
+            // No way of knowing if these are allocated, or actually the size... just hope
+            (false, _) => (params, param_count)
+        };
+
+        Self { action, params, param_count, id: u64::MAX, origin: sender_plugin_id }
+    }
+
+    /// Consumes this Action and deallocates it's params array
+    pub(crate) unsafe fn dealloc(mut self) {
+        // we have to do this with a custom function, as Copy trait conflicts with Drop, and we
+        // need Copy for the Union.
+        
+        // Insurance that params is correctly formated
+        self = Self::new(self.origin, self.action, self.params, self.param_count);
+        
+        if self.param_count == 0 {
+            return;
+        }
+
+        unsafe {
+            let para = Vec::<Property>::from_raw_parts(self.params, self.param_count, self.param_count);
+            
+            for item in para {
+                item.dealloc();
+            }
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct ActionHandle {
+    pub plugin: u64,
+    pub action: u64
+}
+
+impl ActionHandle {
+    pub(crate) fn new(name: &str) -> Option<ActionHandle> {
+        let str = name.trim();
+        let mut split = str.splitn(2, '.');
+
+        let plugin_name = split.next()?;
+        let prop_name = split.next()?;
+
+        Some(Self { plugin: utils::generate_plugin_name_hash(plugin_name)?, action: utils::generate_action_name_hash(prop_name)? })
+    }
+}
+
+impl Default for ActionHandle {
+    fn default() -> Self {
+        ActionHandle { plugin: 0, action: 0 }
+    }
 }
 
 // impl TryFrom<crate::pluginloader::LoaderMessage> for Message {
@@ -331,9 +461,3 @@ pub struct MessagePtr {
 //         }
 //     }
 // }
-
-impl Default for UpdateValue {
-    fn default() -> Self {
-        UpdateValue { handle: PropertyHandle::default(), value: Property::default() }
-    }
-}

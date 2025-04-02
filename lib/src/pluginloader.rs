@@ -6,7 +6,7 @@ use log::{error, info, debug};
 
 use tokio::task::JoinSet;
 
-use crate::{api_types, datastore::DataStore, events::EventMessage, utils::{self, VoidPtrWrapper}, DataStoreReturnCode, EventHandle, Message, MessagePtr, MessageType, MessageValue, PluginHandle, PropertyHandle};
+use crate::{api_types, datastore::DataStore, events::EventMessage, utils::{self, VoidPtrWrapper}, Action, DataStoreReturnCode, EventHandle, Message, MessagePtr, MessageType, MessageValue, PluginHandle, PropertyHandle};
 
 
 
@@ -172,6 +172,10 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
                     Message { sort: MessageType::EventTriggered, value: MessageValue { event: ev } }, "Failed to pass in event trigger"),
                 LoaderMessage::EventUnsubscribed(ev) => send_simple_message(&wrapper, &mut ptr_h,
                     Message { sort: MessageType::EventUnsubscribed, value: MessageValue { event: ev } }, "Failed to inform of event unsubscribe"),
+                LoaderMessage::Action(action) => send_simple_message(&wrapper, &mut ptr_h,
+                    Message { sort: MessageType::ActionRecv, value: MessageValue { action } }, "Failed on processing an Action"),
+                LoaderMessage::ActionCallback(action) => send_simple_message(&wrapper, &mut ptr_h,
+                    Message { sort: MessageType::ActionCallback, value: MessageValue { action } }, "Failed on processing the Callback for an Action"),
                 
 
                 // LoaderMessage::Update(prop_handle, value) => {
@@ -276,6 +280,9 @@ pub(crate) enum LoaderMessage {
 
     EventTriggered(EventHandle),
     EventUnsubscribed(EventHandle),
+
+    Action(Action),
+    ActionCallback(Action),
     
 
     // Update(PropertyHandle, Value),

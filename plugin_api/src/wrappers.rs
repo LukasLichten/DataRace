@@ -100,6 +100,34 @@ impl PartialEq for EventHandle {
     }
 }
 
+/// A handle for an Action, primarily for triggering Actions in other plugins
+#[derive(Debug, Clone, Copy)]
+pub struct ActionHandle {
+    inner: sys::ActionHandle
+}
+
+impl ActionHandle {
+    pub(crate) fn new(handle: sys::ActionHandle) -> Self {
+        ActionHandle { inner: handle }
+    }
+
+    pub(crate) fn get_inner(&self) -> sys::ActionHandle {
+        self.inner
+    }
+
+    /// This is used by Macros in their generated Code allowing them to write down the values
+    /// generated during compiletime.
+    /// This does not serve any further purpose, and should not be used by you
+    #[inline]
+    pub const unsafe fn from_values(plugin_hash: u64, action_hash: u64) -> Self {
+        ActionHandle { inner: sys::ActionHandle { plugin: plugin_hash, action: action_hash } }
+    }
+
+    pub const fn get_action_code(&self) -> u64 {
+        self.inner.action
+    }
+}
+
 /// Handle to access values of a Property that is an array.
 ///
 /// These handles are long lived, and will receive changes to values contained.
@@ -330,10 +358,10 @@ impl Property {
         }
     }
 
-    /// This function will panic if a duration of more then 584,942 years is requested
+    /// This function will panic if a duration of more then 292,471 years is requested
     /// Negative durations are supported through the negative flag
     pub fn from_duration(dur: std::time::Duration, negative: bool) -> Self {
-        let mut t:i64 = dur.as_micros().try_into().expect("Why in the ever loving world did you need more then 580k years?");
+        let mut t:i64 = dur.as_micros().try_into().expect("Why in the ever loving world did you need more then 292k years?");
         if negative {
             t *= -1;
         }
@@ -346,17 +374,17 @@ impl Property {
         Property::Duration(dur)
     }
 
-    /// This function will panic if a duration of more then 584,942 years is requested
+    /// This function will panic if a duration of more then 292,471 years is requested
     /// Negative durations are supported
     pub fn from_millis(dur: i64) -> Self {
-        let val = dur.checked_mul(1000).expect("Why in the ever loving world did you need more then 580k years?");
+        let val = dur.checked_mul(1000).expect("Why in the ever loving world did you need more then 292k years?");
 
         Property::Duration(val)
     }
 
     /// For precision it is recommended to use an integer with `from_millis` or `from_micros` due
     /// to floating point error.  
-    /// This function will overflow if more then 584,942 years is requested.
+    /// This function will overflow if more then 292,471 years is requested.
     /// Negative durations are supported
     pub fn from_sec(dur: f64) -> Self {
         let dur = dur * 1000.0 * 1000.0;
@@ -504,10 +532,10 @@ impl From<bool> for Property {
 }
 
 impl From<std::time::Duration> for Property {
-    /// This function will panic if a duration of more then 584,942 years is requested
+    /// This function will panic if a duration of more then 292,471 years is requested
     /// If you want to define a negative duration, use `from_duration()`
     fn from(value: std::time::Duration) -> Self {
-        Property::Duration(value.as_micros().try_into().expect("Why in the ever loving world did you need more then 580k years?"))
+        Property::Duration(value.as_micros().try_into().expect("Why in the ever loving world did you need more then 292k years?"))
     }
 }
 
@@ -592,6 +620,167 @@ impl Display for DataStoreReturnCode {
     }
 }
 
+
+/// An Action is a request from another Plugin from us to perform an action.
+///
+/// It is best practice to always send a action_callback, even when you don't define this action,
+/// just set a none-zero failure code.
+#[derive(Debug)]
+pub struct Action {
+    action: u64,
+    param: Vec<Property>,
+    id: u64, 
+    origin: u64
+}
+
+impl Action {
+    /// This is the action code for the corrolating action, 
+    /// you can generate the same value via generate_action_handle.
+    pub fn get_action_code(&self) -> u64 {
+        self.action
+    }
+
+    /// The parameters passed in with this action.
+    /// Be prepared that these do not match what you request on your api spec.
+    pub fn get_parameters<'a>(&'a self) -> &'a Vec<Property> {
+        &self.param
+    }
+
+    /// This is the name hash of the caller.
+    /// You can compare it against one generated via generate_foreign_plugin_id.  
+    /// A value of 0 means this comes from DataRace itself, likely a Dashboard
+    pub fn get_origin(&self) -> u64 {
+        self.origin
+    }
+
+    /// Action id is a unique, always increasing id, that should not repeat for the next 580k years
+    /// (even at 1,000,000 actions per second). 
+    /// So newer actions should have a higher number, however when actions are triggered in parallel 
+    /// you may receive actions with ids out of order.
+    pub fn get_action_id(&self) -> u64 {
+        self.id
+    }
+
+    /// Limited conversion, as the params are dropped, as this is only used for callback functions
+    pub(crate) fn to_c(self) -> sys::Action {
+        sys::Action {
+            action: self.action,
+            params: std::ptr::null_mut(),
+            param_count: 0,
+            id: self.id,
+            origin: self.origin
+        }
+    }
+}
+
+impl From<sys::Action> for Action {
+    fn from(value: sys::Action) -> Self {
+        let param = unsafe { property_array_to_vec(value.params, value.param_count) };
+
+        Action { 
+            action: value.action,
+            param, 
+            id: value.id, 
+            origin: value.origin 
+        }
+    }
+}
+
+/// This is a the Reply from the Plugin that we triggered an Action in.  
+/// You can identify the reply via the action_id, which you were given after triggering the event.
+#[derive(Debug)]
+pub struct ActionCallback {
+    return_code: u64,
+    param: Vec<Property>,
+    id: u64, 
+    origin: u64
+}
+
+impl ActionCallback {
+    /// The Return Code.  
+    /// 0 is success, others are to indicate failure, although this is more dependent on the plugin
+    /// you triggered this function in.
+    pub fn get_return_code(&self) -> u64 {
+        self.return_code
+    }
+
+    /// Checks if the return code is 0, but depending on the plugin you called the action on it
+    /// could be a partial success with a not zero code (but is bad design)
+    pub fn is_success(&self) -> bool {
+        self.return_code == 0
+    }
+
+    /// The parameters passed in with this action.
+    /// Be prepared that these do not match what you request on your api spec.
+    pub fn get_parameters<'a>(&'a self) -> &'a Vec<Property> {
+        &self.param
+    }
+
+    /// This is the name hash of the caller.
+    /// You can compare it against one generated via generate_foreign_plugin_id
+    pub fn get_origin(&self) -> u64 {
+        self.origin
+    }
+
+    /// Action id is a unique, always increasing id, that should not repeat for the next 580k years
+    /// (even at 1,000,000 actions per second). So newer actions should have a higher number
+    pub fn get_action_id(&self) -> u64 {
+        self.id
+    }
+}
+
+impl From<sys::Action> for ActionCallback {
+    fn from(value: sys::Action) -> Self {
+        let param = unsafe { property_array_to_vec(value.params, value.param_count) };
+
+        ActionCallback { 
+            return_code: value.action,
+            param, 
+            id: value.id, 
+            origin: value.origin 
+        }
+    }
+}
+
+pub(crate) unsafe fn property_array_to_vec(params: *mut sys::Property, param_count: usize) -> Vec<Property> {
+    let param = unsafe {
+        // core::slice::from_raw_parts(params, param_count)
+        Vec::<sys::Property>::from_raw_parts(params, param_count, param_count)
+    };
+
+    let param: Vec<Property> = param.into_iter().map(|x| Property::new(x)).collect();
+    param
+}
+
+pub(crate) unsafe fn vec_to_property_array(arr: Vec<Property>) -> (*mut sys::Property, usize) {
+    if arr.is_empty() {
+        return (std::ptr::null_mut(), 0);
+    }
+
+    let length = arr.len();
+
+    let layout = std::alloc::Layout::array::<sys::Property>(length)
+        .expect("Impossible to allocate more then address space, afterall the vec has the same size");
+
+    let ptr: *mut sys::Property = unsafe { std::alloc::alloc(layout).cast() };
+    
+    let mut index = 0;
+    for item in arr {
+        // Should not overflow due to arr.len()
+        let target = ptr.offset(index);
+
+        let prop_c = item.to_c();
+        unsafe { target.write(prop_c) };
+
+
+        index += 1;
+    }
+
+    debug_assert!(length == index.try_into().unwrap(), "Vector to array conversion has written outside of allocated memory");
+
+    (ptr, length)
+}
+
 pub enum Message {
     Lock,
     Unlock,
@@ -609,6 +798,10 @@ pub enum Message {
     // Update(PropertyHandle, Property),
     // Remove(PropertyHandle),
 
+    /// Another plugin/dashboard is requesting us to perform an action.
+    ActionRecv(Action),
+    /// We received a Callback from an action we request another plugin to perform
+    ActionCallbackRecv(ActionCallback),
 
     Unknown
 }
@@ -648,6 +841,20 @@ impl From<sys::Message> for Message {
 
                 Message::EventUnsubscribed(EventHandle::new(val))
             },
+            sys::MessageType_ActionRecv => {
+                let val = unsafe {
+                    value.value.action
+                };
+
+                Message::ActionRecv(Action::from(val))
+            },
+            sys::MessageType_ActionCallback => {
+                let val = unsafe {
+                    value.value.action
+                };
+
+                Message::ActionCallbackRecv(ActionCallback::from(val))
+            }
 
 
             // sys::MessageType_Update => {

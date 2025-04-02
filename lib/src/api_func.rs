@@ -3,7 +3,7 @@ use std::sync::Arc;
 use libc::{c_char, c_void};
 use log::{debug, error};
 
-use crate::{events::EventMessage, pluginloader::LoaderMessage, utils::{self, VoidPtrWrapper}, ArrayValueHandle, DataStoreReturnCode, EventHandle, Message, PluginDescription, PluginHandle, PluginNameHash, Property, PropertyHandle, PropertyType, ReturnValue, API_VERSION};
+use crate::{events::EventMessage, pluginloader::LoaderMessage, utils::{self, VoidPtrWrapper}, Action, ActionHandle, ArrayValueHandle, DataStoreReturnCode, EventHandle, Message, PluginDescription, PluginHandle, PluginNameHash, Property, PropertyHandle, PropertyType, ReturnValue, API_VERSION};
 
 
 macro_rules! get_handle {
@@ -391,6 +391,100 @@ pub extern "C" fn trigger_event(handle: *mut PluginHandle, event: EventHandle) -
         DataStoreReturnCode::Ok
     } else {
         DataStoreReturnCode::DataCorrupted
+    }
+}
+
+/// Creates a new action handle
+///
+/// Same as EventHandle and PropertyHandle these are stable hashes, so are best generated during
+/// compiletime, but you don't need to register/create actions, but have the hash for pattern
+/// matching is pretty neat.
+///
+/// Name convention is:
+/// - At least one dot
+/// - Anything ahead of the first dot is the plugin name
+/// - Plugin name can not be empty
+/// - Case insensitive
+/// - More dots can be used
+///
+/// Similar to other functions, it is your job to deallocate the nullterminating string
+#[no_mangle]
+pub extern "C" fn generate_action_handle(name: *mut c_char) -> ReturnValue<ActionHandle> {
+    let msg = get_string!(name);
+
+    ReturnValue::from(
+        ActionHandle::new(msg.as_str())
+            .ok_or(DataStoreReturnCode::ParameterCorrupted)
+    )
+}
+
+/// This triggers the given Action (defined by the ActionHandle) with the parameters, based on
+/// params being a standard C array with length param_count.
+///
+/// If you don't want to pass any parameters then you can simply set params to null and param_count
+/// to 0. It is otherwise trusted that you give a valid pointer to an array of this length, any
+/// deviations will result in at best memory leaks at worst SegFaults.  
+/// Deallocating the Array will be the job of the receiver/action runner, so do NOT deallocate the
+/// array, or you will create a use after free or double free.
+///
+/// You will get the action id returned, this is a unique id (across all plugins, only restart when
+/// Datarace restarts) that uniformly climbs, so newer ids are larger (it could overflow, but even
+/// at 1,000,000 actions per second it would take 580k years).  
+/// The id is used to identify the ActionCallback.
+#[no_mangle]
+pub extern "C" fn trigger_action(handle: *mut PluginHandle, action_handle: ActionHandle, params: *mut Property, param_count: usize) -> ReturnValue<u64> {
+    let han = get_handle_val!(handle);
+
+    let action = Action::new(han.id, action_handle.action, params, param_count);
+
+    let res = futures_lite::future::block_on(async {
+        let ds_r = han.datastore.read().await;
+        
+        let res = ds_r.trigger_action(action_handle.plugin, action).await;
+
+        drop(ds_r);
+        res
+    });
+
+    ReturnValue::from(res.ok_or(DataStoreReturnCode::ParameterCorrupted))
+}
+
+/// This triggers the callback for a given Action, with the given return_code and parameters.
+///
+/// Like trigger_action, params is a C Array that must be the length of param_count, and if you
+/// don't want to pass anything pass null/0 for params/param_count.
+///
+/// The return_code should be 0 for success, however you may use others at your own discression,
+/// just make sure you document them.
+///
+/// The previous_action is consumed by this call, and it's params deallocated, so do not deallocate
+/// manually (or, replace the params in the action with null prior to calling this function).
+#[no_mangle]
+pub extern "C" fn action_callback(handle: *mut PluginHandle, previous_action: Action, return_code: u64, params: *mut Property, param_count: usize) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+
+    let mut action = Action::new(han.id, return_code, params, param_count);
+    action.id = previous_action.id;
+
+
+    let res = futures_lite::future::block_on(async {
+        let ds_r = han.datastore.read().await;
+        
+        let res = ds_r.callback_action(previous_action.origin, action).await;
+
+        drop(ds_r);
+        res
+    });
+
+    unsafe {
+        previous_action.dealloc();
+    }
+
+
+    if res {
+        DataStoreReturnCode::Ok
+    } else {
+        DataStoreReturnCode::ParameterCorrupted
     }
 }
 

@@ -856,7 +856,8 @@ pub(crate) enum Value {
 
 const HASH_KEY_NAME:Key = Key([1,2,3,4]);
 
-/// Serves to generate hashes for the name of a plugin
+/// Serves to generate hashes for the name of a plugin.
+/// There is a special rule that hash 0 is reserved for Datarace itself, so if hash is 0 it fails too
 pub(crate) fn generate_plugin_name_hash(str: &str) -> Option<u64> {
     if str.contains('.') {
         return None;
@@ -867,13 +868,19 @@ pub(crate) fn generate_plugin_name_hash(str: &str) -> Option<u64> {
 
     hasher.append(str.as_bytes());
 
-    Some(hasher.finalize64())
+    let hash = hasher.finalize64();
+
+    if hash != 0 {
+        Some(hash)
+    } else {
+        None
+    }
 }
 
 
 const HASH_KEY_PROPERTY:Key = Key([2,4,3,4]);
 
-/// Serves to generate hashes for the name of a plugin
+/// Serves to generate hashes for the property part of a property name
 pub(crate) fn generate_property_name_hash(str: &str) -> Option<u64> {
     if str.strip_suffix('.').is_some() || str.strip_prefix('.').is_some() {
         return None;
@@ -889,7 +896,7 @@ pub(crate) fn generate_property_name_hash(str: &str) -> Option<u64> {
 
 const HASH_KEY_EVENT:Key = Key([256,432,1024,512]);
 
-/// Serves to generate hashes for the name of a plugin
+/// Serves to generate hashes for the event part of a event name
 pub(crate) fn generate_event_name_hash(str: &str) -> Option<u64> {
     if str.strip_suffix('.').is_some() || str.strip_prefix('.').is_some() {
         return None;
@@ -897,6 +904,22 @@ pub(crate) fn generate_event_name_hash(str: &str) -> Option<u64> {
     let str = str.to_lowercase();
 
     let mut hasher = HighwayHasher::new(HASH_KEY_EVENT);
+
+    hasher.append(str.as_bytes());
+
+    Some(hasher.finalize64())
+}
+
+const HASH_KEY_ACTION:Key = Key([21392,98765237,77788221,64]);
+
+/// Serves to generate hashes for the action part of a action name
+pub(crate) fn generate_action_name_hash(str: &str) -> Option<u64> {
+    if str.strip_suffix('.').is_some() || str.strip_prefix('.').is_some() {
+        return None;
+    }
+    let str = str.to_lowercase();
+
+    let mut hasher = HighwayHasher::new(HASH_KEY_ACTION);
 
     hasher.append(str.as_bytes());
 

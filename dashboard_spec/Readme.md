@@ -1,15 +1,54 @@
-# DataRace Dashboard Properties
-Most Parts of a Dashboard Element is made up of Properties (such as visibility, size, position, content, etc.).  
+# DataRace Dashboard Spec
+This spec produces serializable structs (usually to json), for Dashboards, but also Settings.  
   
-Each Property can be any of these following:  
-- `Fixed`
-- `Computed`
-- `Formated`
-- `Deref`
+It consists out of the following Elements:
+- Dashboard: the overarching structs, contains all elements, name and size
+- DashElement: Singular Element, although it can contain further Elements
+- DashElementType: Defines what an Element is, and contains the required Properties for it
+- Property: A Value, can be runtime defined and changing
 
+Most of their behavior is documented via the given code. While you can manualy write the json for Dashboards,
+or implement it in another language, due to it's WIP nature I won't provide much documentation for this right now 
+(although the rust types should give you an idea).  
+Large parts of this is documenting the bahaviors, some of which are implemented not in this crate but in the main DataRace lib 
+(which does the conversion in html/js).  
+These Dashboards are designed to be agnostic, so should be renderable in native UIs.
+
+## DashElement
+It is important to mention with DashElements that their `name` has to be unique (within a `dashboard`),
+and that names are normalized to lower case. They can only contain ascii letters, numbers and `_`.
+A name with only numbers is also not permittable.
+
+## DashElementType
+Similar to Property a rust enum is used here, which Serializes as such (example Text):
+```
+...
+"element": {
+    "Text": "Test"
+}
+...
+```
+
+Enum Varients with multiple named values (or contain a custom struct with multiple fields) are serialize as such:  
+```
+...
+"element": {
+    "Something": {
+        "value1": {
+            "Fixed": 5
+        },
+        ...
+    }
+}
+...
+```
+
+## Property
+Most Parts of a Dashboard Element is made up of Properties (such as visibility, size, position, content, etc.).  
+They are not to be confused with DataRace Properties (created by plugins), although they can point to one for usage.
+  
 *This functionalty is work and process, this document is not as detailed as it should be, and changes may not be documented immediatly*
 
-## The Types 
 ### Fixed
 Contains simply a value.  
 The value can therefore not change during runtime.  
@@ -23,9 +62,13 @@ The value is updated during Runtime, type converted (if necessary) and applied a
 ### Formated
 Like `Computed` it contains a `source` that is a PropertyHandle string.  
 But you also get the `formater` string, which contains javascript code.  
+
+### Deref
+Used for processing arrays for PropertyHandle `source` at `index`.  
+The `index` is a Property itself, therefore you can use `Fixed`, or any of the other computed (including another `Deref`)
   
-#### Formatter JS Function
-The `formater` code is turned into a js function like this:
+## Formatter JS Function
+Some Properties make use of a `formater`, in which case the contained code is turned into a js function like this:
 ```
 function (value) {
     #formater code
@@ -67,11 +110,8 @@ parse_to_float(value)
 ```
 *More may come... eventually*
 
-### Deref
-Used for processing arrays for PropertyHandle `source` at `index`.  
-The `index` is a Property itself, therefore you can use `Fixed`, or any of the other computed (including another `Deref`)
 
-## Example json
+## Property Example Json
 - Fixed *(Sets x-Position to 250)*:
 ```
 "x": {
