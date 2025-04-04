@@ -1,10 +1,11 @@
 use libc::c_char;
-use serde::{Deserialize, Serialize};
 use std::{ffi::{CStr, CString}, fmt::Debug, sync::{atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering}, Arc, RwLock}};
 use kanal::{Sender, Receiver};
 use highway::{HighwayHash, HighwayHasher, Key};
 
 use crate::{pluginloader::LoaderMessage, DataStoreReturnCode, PluginHandle, Property, PropertyType, PropertyValue};
+
+use datarace_dashboard_spec::socket::Value;
 
 /// Simple way to aquire a String for a null terminating c_char ptr
 /// We do not optain ownership of the String, the owner has to deallocate it
@@ -469,9 +470,26 @@ macro_rules! array_create {
 
             v.into_boxed_slice()
         }
-    };
+    }
 }
 
+macro_rules! array_create_web {
+    ($list:ident, $list_type:ident, $type:ident) => {
+        {
+            let mut v = Vec::<$type>::with_capacity($list.len());
+
+            for item in $list {
+                if let Value::$list_type(i) = item {
+                    v.push($type::new(i));
+                } else {
+                    return None;
+                }
+            }
+
+            v.into_boxed_slice()
+        }
+    }
+}
 macro_rules! web_read_value {
     ($arr:ident, $changes:ident, $cache_arr:ident, $type:ident) => {
         let mut index = 0;
@@ -549,6 +567,47 @@ impl ArrayValueContainer {
                 };
 
                 ArrayValueContainer::Dur(array_create!(val, size, AtomicI64))
+            },
+            _ => None?
+        })
+    }
+
+    pub(crate) fn new_web(list: Vec<Value>) -> Option<Self> {
+        Some(match list.first()? {
+            Value::Int(_) => {
+                Self::Int(array_create_web!(list, Int, AtomicI64))
+            },
+            Value::Float(_) => {
+                let mut v = Vec::<AtomicU64>::with_capacity(list.len());
+
+                for item in list {
+                    if let Value::Float(i) = item {
+                        v.push(AtomicU64::new(u64::from_be_bytes(i.to_be_bytes())));
+                    } else {
+                        return None;
+                    }
+                }
+
+                Self::Float(v.into_boxed_slice())
+            },
+            Value::Bool(_) => {
+                Self::Bool(array_create_web!(list, Bool, AtomicBool))
+            },
+            Value::Dur(_) => {
+                Self::Dur(array_create_web!(list, Dur, AtomicI64))
+            },
+            Value::Str(_) => {
+                let mut v = Vec::<(RwLock<String>, AtomicUsize)>::with_capacity(list.len());
+
+                for item in list {
+                    if let Value::Str(s) = item {
+                        v.push((RwLock::new(s), AtomicUsize::new(1)));
+                    } else {
+                        return None;
+                    }
+                }
+
+                Self::Str(v.into_boxed_slice())
             },
             _ => None?
         })
@@ -831,28 +890,92 @@ impl Default for ValueCache {
     }
 }
 
-/// A single Value, but for internal and web use
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub(crate) enum Value {
-    None,
-    Int(i64),
-    Float(f64),
-    Bool(bool),
-    Str(String),
+impl TryFrom<Value> for Property {
+    type Error = &'static str;
 
-    // It is of note: js auto converts to doubles (52bit mantise),
-    // so messauring in microseconds means we start loosing precision already after ~140 years.
-    // Frankly, js will likely have switched to 128bit floats at that point
-    //
-    // Otherwise, rewrite all js code to expect duration to be in seconds and...
-    // You know, doesn't matter, same precision issue, you will eventually loose the microsecond
-    // precision, although if your number reads over 100years I think you have different
-    // priorities, and while internally i64 hard caps Duration to 500k years, js can handle more.
-    Dur(i64),
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        Ok(match value {
+            Value::None => Property::default(),
+            Value::Int(num) => Property { sort: PropertyType::Int, value: PropertyValue { integer: num } },
+            Value::Bool(b) => Property { sort: PropertyType::Boolean, value: PropertyValue { boolean: b } },
+            Value::Float(f) => Property { sort: PropertyType::Float, value: PropertyValue { decimal: f } },
+            Value::Str(s) => { 
+                let raw = CString::new(s).map_err(|_| "string should be string")?.into_raw();
+                Property { sort: PropertyType::Str, value: PropertyValue { str: raw } }
+            },
+            Value::Dur(d) => Property { sort: PropertyType::Duration, value: PropertyValue { dur: d } },
+            Value::Arr(list) => {
+                let arr = ArrayValueContainer::new_web(list).ok_or("Could not convert Array Value")?;
+                let arr_handle = crate::ArrayValueHandle { arr: Arc::new(arr), allow_modify: true };
 
-    Arr(Vec<Value>),
-    ArrUpdate(Vec<(usize, Value)>)
+                Property { sort: PropertyType::Array, value: PropertyValue { arr: Box::into_raw(Box::new(arr_handle)) } }
+            },
+            Value::ArrUpdate(_) => Err("ArrUpdate is not a legal type for ingest")?
+        })
+    }
 }
+
+pub(crate) fn web_vec_to_c_array(value: Option<Vec<Value>>) -> Result<(*mut Property, usize), &'static str> {
+    fn convert_array(arr: Vec<Value>) -> (Vec<Property>, Option<&'static str>) {
+        let mut target = Vec::<Property>::with_capacity(arr.len());
+        
+        for item in arr {
+            let res = match Property::try_from(item) {
+                Ok(res) => res,
+                Err(e) => return (target, Some(e))
+            };
+
+            target.push(res);
+        }
+
+        (target, None)
+    }
+
+    let value = if let Some(v) = value {
+        v
+    } else {
+        return Ok((std::ptr::null_mut(), 0));
+    };
+
+    if value.is_empty() {
+        return Ok((std::ptr::null_mut(), 0));
+    }
+
+    let arr = match convert_array(value) {
+        (arr, None) => arr,
+        (arr, Some(err)) => {
+            // cleaning up the memory
+            for item in arr {
+                unsafe{ item.dealloc() };
+            }
+
+            return Err(err);
+        }
+    };
+
+    let length = arr.len();
+
+    let layout = std::alloc::Layout::array::<Property>(length)
+        .expect("Impossible to allocate more then address space, afterall the vec has the same size");
+
+    let ptr: *mut Property = unsafe { std::alloc::alloc(layout).cast() };
+    
+    let mut index = 0;
+    for item in arr {
+        // Should not overflow due to arr.len()
+        let target = unsafe { ptr.offset(index) };
+
+        unsafe { target.write(item) };
+
+
+        index += 1;
+    }
+
+    debug_assert!(length == usize::try_from(index).unwrap(), "Vector to array conversion has written outside of allocated memory");
+
+    Ok((ptr, length))
+}
+
 
 const HASH_KEY_NAME:Key = Key([1,2,3,4]);
 

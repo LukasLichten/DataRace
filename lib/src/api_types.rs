@@ -118,19 +118,6 @@ pub struct PropertyHandle {
     pub property: u64
 }
 
-impl serde::Serialize for PropertyHandle {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: serde::Serializer {
-        
-        // Why are we doing it like this? Because javascript is retarded,
-        // and passing it as tupple (which becomes an array in js) or as struct the comparisions
-        // fail
-        // But on strings it work, and this is more compact anyway...
-        serializer.serialize_str(format!("{}|{}", self.plugin, self.property).as_str())
-    }
-}
-
 impl Default for PropertyHandle {
     fn default() -> Self {
         PropertyHandle { plugin: 0, property: 0 }
@@ -190,7 +177,7 @@ pub struct Property {
 impl Property {
     /// This is used internally to deallocate a Property, mostly correctly,
     /// when it is not read in for any purpose
-    unsafe fn dealloc(self) {
+    pub(crate) unsafe fn dealloc(self) {
         match self.sort {
             PropertyType::None => (),
             PropertyType::Int => (),

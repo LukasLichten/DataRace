@@ -1,10 +1,11 @@
 use hashbrown::HashMap;
 use tokio::time::Duration;
-use log::{debug, error};
+use log::{debug, error, trace};
 use serde::{Deserialize, Serialize};
 use socketioxide::{extract::{Data, SocketRef, State}, SocketIo};
+use datarace_dashboard_spec::socket::{Action, UpdatePackage, Value};
 
-use crate::{utils::{Value, ValueCache, ValueContainer}, PropertyHandle};
+use crate::{utils::{ValueCache, ValueContainer}, PropertyHandle};
 
 use super::{utils::{DataStoreLocked, SocketChMsg, SocketDataRef}, WebSocketChReceiver};
 
@@ -45,6 +46,15 @@ async fn on_connect(socket: SocketRef) {
         let _ = socket.join(format!("dash.{}", name));
     });
 
+    socket.on("trigger_action", |socket: SocketRef, Data(action): Data<Action>, State(store): State<SocketDataRef>| async move {
+        // debug!("Action trigger called");
+        match store.trigger_action(&socket.id, action).await {
+            Ok(id) => trace!("Action triggerd, id {}", id),
+            Err(e) => error!("Failed to trigger Action: {}", e)
+        }
+
+    });
+
     // socket.on("message", |socket: SocketRef, Data(data): Data<serde_json::Value>, State(store): State<SocketDataRef>| async move {
     //     let name = match store.get_auth(&socket.id).await {
     //         Some(Auth::Consumer) => "Consumer".to_string(),
@@ -79,8 +89,6 @@ async fn on_connect(socket: SocketRef) {
 
 const UPDATE_RATE: Duration = Duration::from_millis(10);
 
-type UpdatePackage = Vec<(PropertyHandle, Value)>;
-
 async fn update(io: SocketIo, datastore: SocketDataRef, rx: WebSocketChReceiver) {
     let mut props = HashMap::<PropertyHandle, (ValueContainer, ValueCache, Vec<String>)>::new();
     let mut cache = HashMap::<String, (UpdatePackage, usize)>::new();
@@ -110,7 +118,7 @@ async fn update(io: SocketIo, datastore: SocketDataRef, rx: WebSocketChReceiver)
 
                 for d in dashes {
                     if let Some((list, _)) = cache.get_mut(d) {
-                        list.push((handle.clone(), val.clone()));
+                        list.push((handle.clone().into(), val.clone()));
                     }
                 }
             }

@@ -6,7 +6,8 @@ use log::error;
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 use tokio::fs::{self, DirEntry};
 
-use crate::{utils::{Value, ValueCache}, web::dashboard::StaticHtml};
+use crate::{utils::ValueCache, web::dashboard::StaticHtml};
+use datarace_dashboard_spec::socket::Value;
 
 use super::{utils::DataStoreLocked, FsResourceError};
 
@@ -244,7 +245,8 @@ pub(super) async fn edit_dashboard(Path(path): Path<String>, State(datastore): S
                 size_y: Property::Fixed(400),
                 visible: Property::Fixed(true),
                 element: datarace_dashboard_spec::DashElementType::Square("red".to_string()) 
-            }]
+            }],
+        font_size: 12
     };
 
     folder.push(path.as_str());

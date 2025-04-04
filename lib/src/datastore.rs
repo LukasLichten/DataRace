@@ -6,7 +6,9 @@ use tokio::sync::RwLock;
 use kanal::{AsyncSender, Sender};
 use hashbrown::HashMap;
 
-use crate::{events::EventMessage, pluginloader::LoaderMessage, utils::{PluginStatus, ValueContainer}, web::SocketChMsg, Action, DataStoreReturnCode, PluginHandle, PropertyHandle};
+use datarace_dashboard_spec::socket::Action as WebAction;
+
+use crate::{events::EventMessage, pluginloader::LoaderMessage, utils::{self, PluginStatus, ValueContainer}, web::SocketChMsg, Action, DataStoreReturnCode, PluginHandle, PropertyHandle};
 
 /// This is our centralized State
 pub(crate) struct DataStore {
@@ -107,6 +109,27 @@ impl DataStore {
         }
 
         None
+    }
+
+    /// This is for handling actions coming in from the websocket.
+    /// We only convert if the plugin is a native plugin, and then pass on our event
+    pub(crate) async fn trigger_web_action(&self, origin: u64, action: WebAction) -> Result<u64, &'static str> {
+        let id = self.next_action_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        let action_handle: crate::ActionHandle = action.action.try_into().map_err(|_| "Malformed ActionHandle")?;
+
+        if let Some(target) = self.plugins.get(&action_handle.plugin) {
+            let (params, param_count) = utils::web_vec_to_c_array(action.param)?;
+
+            let mut action = Action::new(origin, action_handle.action, params, param_count);
+            action.id = id;
+
+            if target.channel.send(LoaderMessage::Action(action)).await.is_ok() {
+                return Ok(id);
+            }
+        }
+
+        Err("Plugin does not exist")
     }
 
     /// It is expected the action/return code, id, origin and param are set and correctly formated.

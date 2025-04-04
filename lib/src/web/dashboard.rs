@@ -1,7 +1,7 @@
 use log::error;
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 
-use datarace_dashboard_spec::{Dashboard, DashElement, DashElementType, Property};
+use datarace_dashboard_spec::{Action, DashElement, DashElementType, Dashboard, Property, Text};
 
 use crate::PropertyHandle;
 
@@ -58,6 +58,8 @@ impl StaticHtml for Dashboard {
             script src="/lib/datarace.dash.js" {}
 
             script {
+                "var SOCKET = io();"
+
                 "const DISCO = document.getElementById('DISCO');"
                 "const BODY = document.getElementById('BODY');"
                 @for n in names {
@@ -68,19 +70,18 @@ impl StaticHtml for Dashboard {
                 "let SCALE = 0;"
                 "console.log('Hello Everynya!');"
 
-                "var socket = io();"
-                "socket.on('test', function(msg) {"
+                "SOCKET.on('test', function(msg) {"
                     "console.log(msg);"
                 "});"
 
-                "socket.on('require-auth', function() {"
+                "SOCKET.on('require-auth', function() {"
                     "console.log('Server requested auth');"
-                    (format!("socket.emit('auth-dashboard', '{}');", &self.name))
+                    (format!("SOCKET.emit('auth-dashboard', '{}');", &self.name))
                     "DISCO.style.display = 'none';"
                 "});"
 
 
-                "function resize_event() {"        
+                "function resizeEvent() {"        
                     "{"
                         // We indent it to prevent name collisions
                         // as like rust js does masking when declaring a new variable with the same
@@ -111,17 +112,22 @@ impl StaticHtml for Dashboard {
                             "BODY.style.width = window.innerWidth + 'px';"
                             "BODY.style.height = height + 'px';"
                         "}"
+
+                        // Font scaling
+                        (format!("fsize = {} * SCALE;", self.font_size))
+                        (PreEscaped("document.documentElement.style.fontSize = fsize + \"px\";"))
                     "}"
+                    
 
                     @for item in &self.elements {
                         (item.generate_resize_js())
                     }
                 "}"
                 
-                "window.onresize = resize_event;"
-                "resize_event();"
+                "window.onresize = resizeEvent;"
+                "resizeEvent();"
 
-                "socket.on('update', function(UP_ARR) {"
+                "SOCKET.on('update', function(UP_ARR) {"
                     "const UPDATE = new Map(UP_ARR);"
                     // "console.log(UPDATE);"
 
@@ -140,10 +146,16 @@ impl StaticHtml for Dashboard {
                 "});"
 
                 // Disconnect handler
-                "socket.on('disconnect', function() {"
+                "SOCKET.on('disconnect', function() {"
                     "console.log('Lost connection');"
                     "DISCO.style.display = 'block';"
                 "});"
+
+                "function triggerAction(action) {"
+                    // "console.log('Trigger Action');"
+                    // "console.log(action);"
+                    "SOCKET.emit('trigger_action', action);"
+                "}"
             }
         }
         
@@ -159,7 +171,7 @@ impl StaticHtml for DashElement {
         };
 
         html! {
-            div id=(name) style=(format!("position: absolute; left:{}px; top:{}px; width:{}px; height:{}px;",
+            div id=(name.as_str()) style=(format!("position: absolute; left:{}px; top:{}px; width:{}px; height:{}px;",
                 self.x.get_static_value(), self.y.get_static_value(), self.size_x.get_static_value(), self.size_y.get_static_value())) {
                 @match &self.element {
                     DashElementType::Square(color) => {
@@ -171,7 +183,34 @@ impl StaticHtml for DashElement {
                         }
                     },
                     DashElementType::Text(text) => {
-                        div { (text.get_static_value()) }
+                        (text.generate_html())
+                    },
+                    DashElementType::Button{ action, text } => {
+                        button type="button" style="width:100%;height:100%" onClick=(match action {
+                            Action::None => String::new(),
+                            Action::Plugin(action_name) => {
+                                if let Some(ac) = generate_web_action_handle(action_name.as_str()) { 
+                                    format!("{} action: {} {}", "triggerAction({", ac, "})")
+                                } else {
+                                    String::new()
+                                }
+                            }
+                        }) { (text.generate_html()) }
+                    },
+                    DashElementType::TextInput{ action, text } => {
+                        input type="text" style=(format!("width:100%;height:100%;font-size:{}rem", 
+                            text.font_size.as_ref().map_or(0.0, |p| p.get_static_value()))) 
+                            onchange=(match action {
+                                Action::None => String::new(),
+                                Action::Plugin(action_name) => {
+                                    if let Some(ac) = generate_web_action_handle(action_name.as_str()) { 
+                                        format!("{} action: {}, param: {} Str: {}.firstElementChild.value {} {}", "triggerAction({", ac, "[{", name.as_str(), "}]", "})")
+                                    } else {
+                                        String::new()
+                                    }
+                                }
+                            })
+                            value=(text.text.get_static_value()) {}
                     }
                 }
             }
@@ -216,9 +255,21 @@ impl DynamicJs for DashElement {
                     },
                     DashElementType::Text(text) => {
                         // (PreEscaped(format!("console.log(DATA.get({}).Int == null);", serde_json::to_string(&text.get_property_handle()).unwrap())))
+                        ((text, name.as_str()).generate_update_js())
 
-                        @if text.is_computed() {
-                            (PreEscaped(format!("{}.firstElementChild.textContent = {};", name.as_str(), text.generate_read_js().into_string())))
+                    },
+                    DashElementType::Button{ action: _, text } => {
+                        ((text, format!("{}.firstElementChild", name).as_str()).generate_update_js())
+                    },
+                    DashElementType::TextInput{ action: _, text } => {
+                        @if text.text.is_computed() {
+                            (PreEscaped(format!("{}.firstElementChild.value = {};", name, text.text.generate_read_js().into_string())))
+                        }
+
+                        @if let Some(fsize_prop) = &text.font_size {
+                            @if fsize_prop.is_computed() {
+                                (PreEscaped(format!("{}.firstElementChild.style.fontSize = \"{}rem\";", name, fsize_prop.generate_read_js().into_string())))
+                            }
                         }
                     }
                 } 
@@ -258,6 +309,40 @@ impl DynamicJs for DashElement {
                 "}"
             }
         }
+    }
+}
+
+impl StaticHtml for Text {
+    fn generate_html(&self) -> Markup {
+        let font_size_fix = if let Some(fsize_prop) = &self.font_size {
+            fsize_prop.get_static_value()
+        } else {
+            1.0
+        };
+
+        html!{
+            div style=(format!("font-size:{}rem", font_size_fix)) { (self.text.get_static_value()) }
+        }
+    }
+}
+
+impl DynamicJs for (&Text, &str) {
+    fn generate_update_js(&self) -> Markup {
+        let (text, name) = self;
+        html!{
+            @if text.text.is_computed() {
+                (PreEscaped(format!("{}.firstElementChild.textContent = {};", name, text.text.generate_read_js().into_string())))
+            }
+            @if let Some(fsize_prop) = &text.font_size {
+                @if fsize_prop.is_computed() {
+                    (PreEscaped(format!("{}.firstElementChild.style.fontSize = \"{}rem\";", name, fsize_prop.generate_read_js().into_string())))
+                }
+            }
+        }
+    }
+
+    fn generate_resize_js(&self) -> Markup {
+        html!()
     }
 }
 
@@ -395,7 +480,14 @@ impl DynamicReadJs for Property<String> {
 impl<T> HandleReadJs for Property<T> {
     fn generate_handle_js(&self) -> Option<String> {
         let handle = PropertyHandle::new(self.get_property_handle()?.as_str())?;
-        let serial = serde_json::to_string(&handle).ok()?;
+        let web_handle: datarace_dashboard_spec::socket::PropertyHandle = handle.into();
+        let serial = serde_json::to_string(&web_handle).ok()?;
         Some(format!("DATA.get({})", serial))
     }
+}
+
+fn generate_web_action_handle(name: &str) -> Option<String> {
+    let handle = crate::ActionHandle::new(name)?;
+    let web_handle: datarace_dashboard_spec::socket::ActionHandle = handle.into();
+    Some(serde_json::to_string(&web_handle).ok()?)
 }

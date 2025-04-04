@@ -2,12 +2,15 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
+pub mod socket;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Dashboard {
     pub name: String,
     pub elements: Vec<DashElement>,
     pub size_x: i32,
-    pub size_y: i32
+    pub size_y: i32,
+    pub font_size: i32
 }
 
 impl Dashboard {
@@ -99,7 +102,13 @@ impl DashElement {
 
             },
             DashElementType::Text(text) => {
-                text.add_property_handle_to_collection(&mut res);
+                res.extend(text.list_properties());
+            },
+            DashElementType::Button { action:_, text } => {
+                res.extend(text.list_properties());
+            },
+            DashElementType::TextInput { action:_, text } => {
+                res.extend(text.list_properties());
             }
         }
 
@@ -118,10 +127,31 @@ impl DashElement {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DashElementType {
     Square(String),
-    Text(Property<String>),
-    Folder(Vec<DashElement>)
+    Text(Text),
+    Folder(Vec<DashElement>),
+    Button{ action: Action, text: Text },
+    TextInput{ action: Action, text: Text }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Text {
+    pub text: Property<String>,
+    pub font_size: Option<Property<f64>>,
+
+}
+
+impl Text {
+    fn list_properties(&self) -> HashSet<String> {
+        let mut res = HashSet::<String>::new();
+        
+        self.text.add_property_handle_to_collection(&mut res);
+        if let Some(f) = self.font_size.as_ref() {
+            f.add_property_handle_to_collection(&mut res);
+        }
+
+        res
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Property<T> {
@@ -190,3 +220,11 @@ impl<T> Property<T> where T: Default + Clone {
         }
     }
 }
+
+#[derive(Debug,Clone,Serialize,Deserialize)]
+pub enum Action {
+    Plugin(String),
+    None
+}
+
+

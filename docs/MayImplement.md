@@ -37,3 +37,13 @@ bottlenecked by PluginLoader and unoptimized update functions before anything.
 The advantage of the current implementation is that you can technically even ignore locking of the handle, as the channel to access the handle will never change,
 therefore it is (basically) memory safe to access it, so events can be triggered with complete disregard.
 While with this propossed solution you will need to make sure that the plugin isn't racing itself.  
+
+## Action Triggers more direct
+Actions trigger (and also their callback) require accessing Datastore (to access the channel of the other plugin), which requires an async runtime.
+This is a continued issue with the DataRace api, where the pluginloader might be async, but we can't keep async within the update function of the plugin 
+and therefore can't be in the API either.  
+So the stupid solution currently is to do a futures_lite block_on call to get our compact async enviroment, even if this isn't ideal.  
+  
+Maybe ActionHandles could be made to include the targeted plugin channel? 
+Making another async task (like the current event loop) that receives async closures to execute via a channel, but that has numeros issues too,
+like overhead from the seperate task and no results.
