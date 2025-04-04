@@ -1,4 +1,5 @@
-use hashbrown::HashMap;
+use std::collections::HashMap;
+
 use kanal::{AsyncReceiver, AsyncSender, Sender};
 use log::{debug, error};
 use tokio::task::JoinHandle;

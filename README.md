@@ -30,6 +30,10 @@ In Progess:
 Some small features are up for consideration, ready to implement,
 but to stop myself from getting bucked by scope creep more then necessary I have instead put them [here](docs/MayImplement.md)
 
+## Known Issues
+Replacing the lib of a plugin during runtime will lead to segfault as soon as any code within the plugin 
+is executed (be that and update, or a seperate thread running in a loop).
+
 ## Building
 ### Build Requirements
 As `plugin_api_sys` makes use of bindgen for build, which requires clang.  

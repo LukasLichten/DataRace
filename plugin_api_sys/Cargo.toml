@@ -10,7 +10,7 @@ description = "Sys crate that binds to libdatarace library"
 
 [build-dependencies]
 built = "0.7"
-bindgen = "^0.69"
+bindgen = "^0.71"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

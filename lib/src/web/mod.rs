@@ -21,8 +21,8 @@ pub(crate) async fn run_webserver(datastore: DataStoreLocked, websocket_ch_recv:
     let app = axum::Router::new()
         .route("/", get(pages::index))
         .route("/dashboard", get(pages::dashboard_list))
-        .route("/dashboard/render/:id", get(pages::load_dashboard))
-        .route("/dashboard/edit/:id", get(pages::edit_dashboard))
+        .route("/dashboard/render/{id}", get(pages::load_dashboard))
+        .route("/dashboard/edit/{id}", get(pages::edit_dashboard))
         .route("/properties", get(pages::properties))
         .route("/setting", get(pages::settings))
         .route("/style.css", get(css_main_style))
@@ -155,7 +155,7 @@ impl FsResourceError {
 }
 
 /// File is placed in assets/js_lib/socket.io.min.js
-/// It is aquired via https://cdn.socket.io/4.7.5/socket.io.min.js
+/// It is aquired via https://cdn.socket.io/4.8.1/socket.io.min.js
 ///
 /// We include this in the binary and serve it from our server for offline compat
 /// and knowing this version works with our socketioxide version

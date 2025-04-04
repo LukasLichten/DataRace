@@ -1,10 +1,9 @@
-use std::{path::PathBuf, str::FromStr, sync::atomic::AtomicU64};
+use std::{collections::{hash_map, HashMap}, path::PathBuf, str::FromStr, sync::atomic::AtomicU64};
 
 use log::info;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use kanal::{AsyncSender, Sender};
-use hashbrown::HashMap;
 
 use datarace_dashboard_spec::socket::Action as WebAction;
 
@@ -216,7 +215,7 @@ impl DataStore {
         &self.config
     }
 
-    pub(crate) fn iter_properties<'a>(&'a self) -> hashbrown::hash_map::Keys<'a, PropertyHandle, ValueContainer> {
+    pub(crate) fn iter_properties<'a>(&'a self) -> hash_map::Keys<'a, PropertyHandle, ValueContainer> {
         self.properties.keys()
     }
 

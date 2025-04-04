@@ -17,7 +17,7 @@ impl Parse for PropInitor {
         input.parse::<Token![,]>()?;
         let plugin_name = input.parse()?;
         input.parse::<Token![,]>()?;
-        let tuples = input.parse_terminated(PropInitTupple::parse)?;
+        let tuples = input.parse_terminated(PropInitTupple::parse, Token![,])?;
 
         Ok(PropInitor { func_name, plugin_name, tuples })
     }

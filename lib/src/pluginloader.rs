@@ -1,7 +1,6 @@
-use std::{path::PathBuf, fs};
+use std::{collections::HashMap, fs, mem::ManuallyDrop, path::PathBuf};
 
 use dlopen2::wrapper::{WrapperApi, Container};
-use hashbrown::HashMap;
 use log::{error, info, debug};
 
 use tokio::task::JoinSet;
@@ -49,8 +48,28 @@ pub(crate) async fn load_all_plugins(datastore: &'static tokio::sync::RwLock<Dat
     Ok(plugin_task_handles)
 }
 
+/// https://www.man7.org/linux/man-pages/man3/dlopen.3.html
+/// Flags passed in during dlopen:
+/// Main flags (one has to be chosen):
+/// - RTLD_LAZY: Resolves symbols only when called (default)
+/// - RTLD_NOW: Resolves symbols before load finishes
+/// Optional Flags (zero or more):
+/// - RTLD_GLOBAL: Symbols defined by this shared object are available for symbol resolution by
+/// others loaded later
+/// - RTLD_LOCAL: default, symbols are not available for later objects
+/// - RTLD_NODELETE: does not unload the object when getting dropped
+/// - RTLD_NOLOAD: only opens if the object was loaded previously (irrelevant for us)
+/// - RTLD_DEEPBIND: Place the lookup scope of the symbols in this shared object ahead of the global scope,
+/// idk, probably means symbols would be loaded from here before resolving them elsewhere, allowing
+/// overriding things. Not sure if this could be useful
+const DLOPEN_FLAGS: Option<i32> = Some(libc::RTLD_NOW | libc::RTLD_LOCAL);
+
 async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataStore>, event_channel: kanal::Sender<EventMessage>) -> Result<(), String> {
-    if let Ok(wrapper) = unsafe { Container::<PluginWrapper>::load(path.to_str().unwrap()) } {
+    if let Ok(wrapper) = unsafe { Container::<PluginWrapper>::load_with_flags(path.to_str().unwrap(), DLOPEN_FLAGS) } {
+        // When crashing out we want to avoid the unloading of the plugin, as this could cause as a
+        // segfault in the still running thread
+        let mut wrapper = ManuallyDrop::new(wrapper);
+
         // Preperations
         let desc = wrapper.get_plugin_description();
 
@@ -224,6 +243,7 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
             info!("Plugin {} stopped", name);
         }
         drop(w_store);
+        unsafe { ManuallyDrop::drop(&mut wrapper); }
 
         Ok(())
     } else {

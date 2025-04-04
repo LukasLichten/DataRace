@@ -1,4 +1,5 @@
-use hashbrown::HashMap;
+use std::collections::HashMap;
+
 use tokio::time::Duration;
 use log::{debug, error, trace};
 use serde::{Deserialize, Serialize};
@@ -84,7 +85,7 @@ async fn on_connect(socket: SocketRef) {
         debug!("Left *big sad*");
     });
     
-    let _ = socket.emit("require-auth", ());
+    let _ = socket.emit("require-auth", &());
 }
 
 const UPDATE_RATE: Duration = Duration::from_millis(10);
@@ -127,7 +128,7 @@ async fn update(io: SocketIo, datastore: SocketDataRef, rx: WebSocketChReceiver)
         // Sending
         for (name, (list, _)) in cache.iter_mut() {
             if !list.is_empty() {
-                if let Err(e) = io.within(format!("dash.{}", name)).emit("update", [&list]) {
+                if let Err(e) = io.within(format!("dash.{}", name)).emit("update", &[&list]).await {
                     error!("Failed to send update to dashboard {}: {}", name, e);
                 } else {
                     list.clear();

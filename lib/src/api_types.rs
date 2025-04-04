@@ -1,9 +1,8 @@
-use std::{sync::Arc, usize};
+use std::{collections::HashMap, sync::Arc, usize};
 
 use libc::c_char;
 use log::error;
 use crate::utils; 
-use hashbrown::HashMap;
 
 /// Unique Handle of your plugin, allowing you to interact with the API
 pub struct PluginHandle {
