@@ -447,3 +447,36 @@ impl Default for ActionHandle {
 //         }
 //     }
 // }
+#[cfg(test)]
+mod test {
+    use crate::{Action, ActionHandle, DataStoreReturnCode, EventHandle, Message, MessagePtr, MessageType, MessageValue, PluginDescription, Property, PropertyHandle, PropertyType, PropertyValue, ReturnValue};
+
+    #[test]
+    fn abi_size_check() {
+        assert_eq!(std::mem::size_of::<ActionHandle>(), 16, "ActionHandle size missmatch");
+        assert_eq!(std::mem::size_of::<PropertyHandle>(), 16, "PropertyHandle size missmatch");
+        assert_eq!(std::mem::size_of::<EventHandle>(), 16, "EventHandle size missmatch");
+
+        assert_eq!(std::mem::size_of::<Action>(), 40, "Action size missmatch");
+
+        assert_eq!(std::mem::size_of::<MessagePtr>(), 24, "MessagePtr size missmatch");
+        assert_eq!(std::mem::size_of::<MessageValue>(), 40, "MessageValue size missmatch");
+        assert_eq!(std::mem::size_of::<MessageType>(), 1, "MessageType size missmatch");
+        assert_eq!(std::mem::size_of::<Message>(), 48, "Message size missmatch");
+
+        assert_eq!(std::mem::size_of::<PropertyValue>(), 8, "PropertyValue size missmatch");
+        assert_eq!(std::mem::size_of::<PropertyType>(), 1, "PropertyType size missmatch");
+        assert_eq!(std::mem::size_of::<Property>(), 16, "Property size missmatch");
+
+        assert_eq!(std::mem::size_of::<PluginDescription>(), 32, "PluginDescription size missmatch");
+
+        assert_eq!(std::mem::size_of::<DataStoreReturnCode>(), 1, "DataStoreReturnCode size missmatch");
+
+        assert_eq!(std::mem::size_of::<ReturnValue<u64>>(), 16, "ReturnValue_u64 size missmatch");
+        assert_eq!(std::mem::size_of::<ReturnValue<PropertyHandle>>(), 24, "ReturnValue_PropertyHandle size missmatch");
+        assert_eq!(std::mem::size_of::<ReturnValue<EventHandle>>(), 24, "ReturnValue_EventHandle size missmatch");
+        assert_eq!(std::mem::size_of::<ReturnValue<ActionHandle>>(), 24, "ReturnValue_ActionHandle size missmatch");
+        assert_eq!(std::mem::size_of::<ReturnValue<Property>>(), 24, "ReturnValue_Property size missmatch");
+    }
+
+}

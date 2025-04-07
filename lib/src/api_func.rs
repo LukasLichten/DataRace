@@ -792,7 +792,7 @@ pub extern "C" fn unlock_plugin(handle: *mut PluginHandle) -> DataStoreReturnCod
 }
 
 
-/// Puts a message back into the Queue
+/// Puts a message back into the Queue (currently not implemented)
 ///
 /// Keep in mind, if you reenque an Update message, this may result in another value update for
 /// this property coming inbetween, resulting in you progressing next the newer value before the

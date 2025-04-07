@@ -227,6 +227,48 @@ impl Clone for ArrayHandle {
     }
 }
 
+impl PartialEq for ArrayHandle {
+    fn eq(&self, other: &Self) -> bool {
+        let mut iter = self.iter();
+        let mut other_iter = other.iter();
+
+        while let Some(item) = iter.next() {
+            if let Some(other_item) = other_iter.next() {
+                if item != other_item {
+                    return false;
+                }
+            } else {
+                // Size missmatch
+                return false;
+            }
+        }
+
+        // If the other_iter has still items then there is a size missmatch and we return false
+        matches!(other_iter.next(), None)
+    }
+}
+
+impl ToString for ArrayHandle {
+    fn to_string(&self) -> String {
+        let mut ouput = "[".to_string();
+
+        let mut iter = self.iter();
+        while let Some(item) = iter.next() {
+            if let Property::Str(text) = item {
+                ouput = format!("{}\"{}\", ", ouput, text)
+            } else {
+                ouput = format!("{}{}, ", ouput, item.to_string())
+            }
+        }
+
+        if let Some(pre) = ouput.strip_suffix(", ") {
+            format!("{}]", pre)
+        } else {
+            format!("{}]", ouput)
+        }
+    }
+}
+
 /// Iterator over the ArrayHandle
 pub struct ArrayIterator<'a> {
     handle: &'a ArrayHandle,
@@ -251,7 +293,7 @@ impl Iterator for ArrayIterator<'_> {
 /// Note:
 /// Duration is messured in micro seconds (1s = 1,000 ms = 1,000,000 us), and is signed
 /// So, while std::time::Duration does NOT support negative timespans, this DOES
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Property {
     None,
     Int(i64),
@@ -425,24 +467,7 @@ impl ToString for Property {
             Property::Bool(b) => b.to_string(),
             Property::Str(s) => s.clone(),
             Property::Duration(d) => format!("{}us", d.to_string()),
-            Property::Array(arr) => {
-                let mut ouput = "[".to_string();
-
-                let mut iter = arr.iter();
-                while let Some(item) = iter.next() {
-                    if let Property::Str(text) = item {
-                        ouput = format!("{}\"{}\", ", ouput, text)
-                    } else {
-                        ouput = format!("{}{}, ", ouput, item.to_string())
-                    }
-                }
-
-                if let Some(pre) = ouput.strip_suffix(", ") {
-                    format!("{}]", pre)
-                } else {
-                    format!("{}]", ouput)
-                }
-            }
+            Property::Array(arr) => arr.to_string()
         }
     }
 }
@@ -566,7 +591,7 @@ pub enum DataStoreReturnCode {
     DoesNotExist = 3,
     TypeMissmatch = 5,
     NotImplemented = 6,
-    ParameterCorrcupted = 10,
+    ParameterCorrupted = 10,
     DataCorrupted = 11,
     Unknown = 255
 
@@ -597,7 +622,7 @@ impl From<sys::DataStoreReturnCode> for DataStoreReturnCode {
             sys::DataStoreReturnCode_DoesNotExist => DataStoreReturnCode::DoesNotExist,
             sys::DataStoreReturnCode_TypeMissmatch => DataStoreReturnCode::TypeMissmatch,
             sys::DataStoreReturnCode_NotImplemented => DataStoreReturnCode::NotImplemented,
-            sys::DataStoreReturnCode_ParameterCorrupted => DataStoreReturnCode::ParameterCorrcupted,
+            sys::DataStoreReturnCode_ParameterCorrupted => DataStoreReturnCode::ParameterCorrupted,
             sys::DataStoreReturnCode_DataCorrupted => DataStoreReturnCode::DataCorrupted,
             _ => DataStoreReturnCode::Unknown
         }
@@ -613,7 +638,7 @@ impl Display for DataStoreReturnCode {
             DataStoreReturnCode::DoesNotExist => "Action failed: Can not access item that does not exist",
             DataStoreReturnCode::TypeMissmatch => "Action failed: You can only use the same type for updates as you created it with (or use change_property_type)",
             DataStoreReturnCode::NotImplemented => "Action denied: This function has to still be implemented",
-            DataStoreReturnCode::ParameterCorrcupted => "Action failed: Parameters are inproperly formated or otherwise incorrect",
+            DataStoreReturnCode::ParameterCorrupted => "Action failed: Parameters are inproperly formated or otherwise incorrect",
             DataStoreReturnCode::DataCorrupted => "Error: Unable to parse input Data. This indicates a corrupted PluginHandle or Datastore, which are non recoverable",
             DataStoreReturnCode::Unknown => "Action failed for an unknown reason. Plugin is too out of date to know this message, possibly the reason for the Error"
         })
