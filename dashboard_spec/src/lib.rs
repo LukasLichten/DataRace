@@ -23,6 +23,15 @@ impl Dashboard {
 
         res
     }
+
+    pub fn all_formatter_scripts(&self) -> Vec<(String, String)> {
+        let mut list = Vec::new();
+        for e in &self.elements {
+            list.extend(e.all_formatter_scripts());
+        }
+
+        list
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -122,6 +131,43 @@ impl DashElement {
         res
     }
 
+    fn all_formatter_scripts(&self) -> Vec<(String, String)> {
+        let mut list = Vec::new();
+        let name = match self.normalize_name() {
+            Ok(n) => n,
+            Err(_) => return list
+        };
+
+        self.x.add_formater_functions(name.as_str(), "x", &mut list);
+        self.y.add_formater_functions(name.as_str(), "y", &mut list);
+        self.size_x.add_formater_functions(name.as_str(), "size_x", &mut list);
+        self.size_y.add_formater_functions(name.as_str(), "size_y", &mut list);
+
+        self.visible.add_formater_functions(name.as_str(), "visible", &mut list);
+
+        match &self.element {
+            DashElementType::Square(_) => {
+            },
+            DashElementType::Folder(elements) => {
+                for e in elements {
+                    list.extend(e.all_formatter_scripts());
+                }
+            },
+            DashElementType::Text(text) => {
+                text.all_formatter_scripts(name.as_str(), &mut list);
+            },
+            DashElementType::Button { action:_, text } => {
+                text.all_formatter_scripts(name.as_str(), &mut list);
+            },
+            DashElementType::TextInput { action:_, text } => {
+                text.all_formatter_scripts(name.as_str(), &mut list);
+            }
+
+        }
+        
+        list
+    }
+
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -151,6 +197,14 @@ impl Text {
 
         res
     }
+
+    fn all_formatter_scripts(&self, element_name: &str, list: &mut Vec<(String, String)>) {
+        self.text.add_formater_functions(element_name, "text", list);
+        
+        if let Some(f) = self.font_size.as_ref() {
+            f.add_formater_functions(element_name, "font_size", list);
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -167,6 +221,23 @@ pub enum Property<T> {
 }
 
 impl<T> Property<T> {
+
+    pub fn add_formater_functions(&self, element_name: &str, field_name: &str, list: &mut Vec<(String, String)>) {
+        match self {
+            Property::Formated { source: _, formater } => {
+                list.push(
+                (self.get_formater_function_name(element_name, field_name), formater.clone()))
+            },
+            Property::Deref { source: _, index } => {
+                index.add_formater_functions(self.get_formater_function_name(element_name, field_name).as_str(), "deref", list);
+            }
+            _ => ()
+        }
+    }
+    
+    pub fn get_formater_function_name(&self, element_name: &str, field_name: &str) -> String {
+        format!("{element_name}_F_{field_name}")
+    }
 
     pub fn get_property_handle(&self) -> Option<String> {
         match self {

@@ -34,7 +34,13 @@ pub(crate) async fn run_webserver(datastore: DataStoreLocked, websocket_ch_recv:
 
     info!("Webserver Launched");
     axum::serve(listener, app)
-        .with_graceful_shutdown(async move { while !shutdown.load(std::sync::atomic::Ordering::Acquire) { std::thread::sleep(std::time::Duration::from_secs(1)) }  })
+        .with_graceful_shutdown(async move { 
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            while !shutdown.load(std::sync::atomic::Ordering::Acquire) { 
+                interval.tick().await;
+            }  
+        })
         .await?;
     info!("Webserver stopped!");
     Ok(())

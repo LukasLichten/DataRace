@@ -90,13 +90,12 @@ keeping through that the need to send updates from DataRace to the Dashboard to 
 As it is a Browser it is also possible for you to use `document` for persitent storage.
 
 But also you can break the entire Dashboard:
-- Runtime errors will propagate upwards and halt the update (I may saveguard against this *eventually*)
-- Syntax errors will stop the dashboard from loading at all
-  - Make sure you have `;` at the end of EVERY statement
-- Overriding critical variables (such as handles), which will result in breakages
-  - Never omit `let/var/const` during declaration
-  - You can also use this for "sandbox escape", allowing you to modify dashboard elements outside of what is usually possible
+- Nothing prevents a sandbox escape via `document` and things like the `getElement` functions
 - Conflicts on the persitent storage of `document` (two elements accessing the same sub key)
+- Syntax and Runtime errors will prevent it's element (and all dependent to fail to update)
+  - The dashboard will limp on in this state, but show and error
+  - ReferenceErrors are usually caused by Syntax error in that function
+  - Just make sure you have `;` or line break at the end of EVERY statement
 
 Additional functions from `lib/assets/js_lib/datarace.dash.js` you can use for formatting:
 ```

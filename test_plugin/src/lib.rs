@@ -21,6 +21,7 @@ macros::propertys_initor!{ test, "test_plugin",
     (NONE_HANDLE, "null", None),
     (TIME_HANDLE, "gne_time", Duration::from_secs(5)),
     (TO_BE_DELETED, "delete_me", 5.5),
+    (COUNTER, "counter", 0),
 
     (UNFINISHED_TEST, "unfinished_test", 8),
 }
@@ -334,6 +335,13 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
                         handle.action_callback(action, 0, None);
                     }
                 },
+                datarace_plugin_api::macros::generate_action_code!("count") => {
+                    if let Ok(Property::Int(v)) = handle.get_property_value(COUNTER) {
+                        let v = v + 1;
+                        handle.log_info(format!("Counter increased to {v}"));
+                        handle.update_property(COUNTER, Property::Int(v));
+                    }
+                }
                 _ => {
                     handle.action_callback(action, 404, None);
                 }

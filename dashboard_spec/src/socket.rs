@@ -32,7 +32,7 @@ pub struct ActionHandle(String);
 
 impl ActionHandle {
     pub fn new(plugin: u64, action: u64) -> Self {
-        Self(format!("{}|{}", plugin, action))
+        Self(format!("{}/{}", plugin, action))
     }
 
     pub fn get_hashes(&self) -> Option<(u64, u64)> {
@@ -41,7 +41,7 @@ impl ActionHandle {
 }
 
 fn extract_hashes(web_handle: &str) -> Option<(u64, u64)> {
-    let (plugin,specific) = web_handle.split_once('|')?;
+    let (plugin,specific) = web_handle.split_once('/')?;
 
     let plugin: u64 = plugin.parse().ok()?;
     let specific: u64 = specific.parse().ok()?;

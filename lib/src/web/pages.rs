@@ -6,10 +6,10 @@ use log::error;
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 use tokio::fs::{self, DirEntry};
 
-use crate::{utils::ValueCache, web::dashboard::StaticHtml};
+use crate::utils::ValueCache;
 use datarace_dashboard_spec::socket::Value;
 
-use super::{utils::DataStoreLocked, FsResourceError};
+use super::{dashboard::WebDashboard, utils::DataStoreLocked, FsResourceError};
 
 
 #[allow(dead_code)]
@@ -224,7 +224,9 @@ pub(super) async fn settings() -> Markup {
 
 pub(super) async fn load_dashboard(Path(path): Path<String>, State(datastore): State<DataStoreLocked>) -> Response {
     match super::get_dashboard(datastore, path.clone()).await {
-        Ok(dash) => html!{ (dash.generate_html()) }.into_response(),
+        Ok(dash) =>  html!{ 
+            (dash.generate_dashboard()) 
+        }.into_response(),
         Err(e) => e.into_response(path)
     }
 }
