@@ -1,7 +1,7 @@
 use log::error;
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 
-use datarace_dashboard_spec::{Action, DashElement, DashElementType, Dashboard, Property, Text};
+use datarace_socket_spec::dashboard::{Action, DashElement, DashElementType, Dashboard, Property, Text};
 
 use crate::PropertyHandle;
 
@@ -610,7 +610,7 @@ impl DynamicReadJs for Property<String> {
 impl<T> HandleReadJs for Property<T> {
     fn generate_handle_js(&self) -> Option<String> {
         let handle = PropertyHandle::new(self.get_property_handle()?.as_str())?;
-        let web_handle: datarace_dashboard_spec::socket::PropertyHandle = handle.into();
+        let web_handle: datarace_socket_spec::socket::PropertyHandle = handle.into();
         let serial = serde_json::to_string(&web_handle).ok()?;
         Some(format!("DATA.get({})", serial))
     }
@@ -618,6 +618,6 @@ impl<T> HandleReadJs for Property<T> {
 
 fn generate_web_action_handle(name: &str) -> Option<String> {
     let handle = crate::ActionHandle::new(name)?;
-    let web_handle: datarace_dashboard_spec::socket::ActionHandle = handle.into();
+    let web_handle: datarace_socket_spec::socket::ActionHandle = handle.into();
     Some(serde_json::to_string(&web_handle).ok()?)
 }

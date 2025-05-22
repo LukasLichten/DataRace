@@ -75,7 +75,7 @@ macro_rules! get_string {
 /// It is also your job to deallocate this name string.
 /// Also the initial value set the datatype, you can only use this type when calling update 
 /// you need to call change_property_type to change this type
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, prop_handle: PropertyHandle, value: Property) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
     let msg = get_string!(name, DataStoreReturnCode::ParameterCorrupted);
@@ -113,7 +113,7 @@ pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, 
 /// and update the individual values.
 /// If you can want to change the size or datatype you have to use change_property_type too.
 /// Passing in an Array will not deallocate that pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern  "C" fn update_property(handle: *mut PluginHandle, prop_handle: PropertyHandle, value: Property) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
@@ -130,7 +130,7 @@ pub extern  "C" fn update_property(handle: *mut PluginHandle, prop_handle: Prope
 
 /// Returns the value for a given property handle that you previously subscribed to (or that you
 /// created)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn get_property_value(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> ReturnValue<Property> {
     let han = get_handle_val!(handle);
 
@@ -163,7 +163,7 @@ pub extern "C" fn get_property_value(handle: *mut PluginHandle, prop_handle: Pro
 /// - More dots can be used
 ///
 /// Similar to create_property, it is your job to deallocate the nullterminating string
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn generate_property_handle(name: *mut c_char) -> ReturnValue<PropertyHandle> {
     let msg = get_string!(name);
     
@@ -178,7 +178,7 @@ pub extern "C" fn generate_property_handle(name: *mut c_char) -> ReturnValue<Pro
 /// Same as create, this (after checking that the property exists) will send a Message to the loader
 /// which locks the plugin to perform the delete. The queue length is unknown, so it can take
 /// multiple locks and unlocks till this action is performed
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn delete_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
@@ -199,7 +199,7 @@ pub extern "C" fn delete_property(handle: *mut PluginHandle, prop_handle: Proper
 /// Same as create and delete, this (after checking that the property exists) will send a Message to the loader
 /// which locks the plugin to perform the change over. The queue length is unknown, so it can take
 /// multiple locks and unlocks till this action is performed
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn change_property_type(handle: *mut PluginHandle, prop_handle: PropertyHandle, value: Property) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
@@ -225,7 +225,7 @@ pub extern "C" fn change_property_type(handle: *mut PluginHandle, prop_handle: P
 /// message to our pluginloader, which will then look up and send a message to loader of the plugin
 /// for this property, then this respondes back to our loader, which will then add it to the
 /// subscriptions (for which it will lock)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn subscribe_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
@@ -244,7 +244,7 @@ pub extern "C" fn subscribe_property(handle: *mut PluginHandle, prop_handle: Pro
 /// Same as create/change_property/delete, this (after checking that the property was subscribed to) will send a Message to the loader
 /// which locks the plugin to perform the removal. The queue length is unknown, so it can take
 /// multiple locks and unlocks till this action is performed
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn unsubscribe_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
@@ -273,7 +273,7 @@ pub extern "C" fn unsubscribe_property(handle: *mut PluginHandle, prop_handle: P
 /// - More dots can be used
 ///
 /// Similar to create_property, it is your job to deallocate the nullterminating string
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn generate_event_handle(name: *mut c_char) -> ReturnValue<EventHandle> {
     let msg = get_string!(name);
     
@@ -292,7 +292,7 @@ pub extern "C" fn generate_event_handle(name: *mut c_char) -> ReturnValue<EventH
 ///
 /// But as all Event related calls go through the event loop it is guaranteed that the event
 /// exists for any trigger calls following this function
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn create_event(handle: *mut PluginHandle, event: EventHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
@@ -315,7 +315,7 @@ pub extern "C" fn create_event(handle: *mut PluginHandle, event: EventHandle) ->
 ///
 /// But as all Event related calls go through the event loop it is guaranteed that the event
 /// will not exist for any event related calls after this function
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn delete_event(handle: *mut PluginHandle, event: EventHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
@@ -342,7 +342,7 @@ pub extern "C" fn delete_event(handle: *mut PluginHandle, event: EventHandle) ->
 ///
 /// It is possible that the first triggering of the event is already queued, then this subscription
 /// will miss the first trigger.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn subscribe_event(handle: *mut PluginHandle, event: EventHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
@@ -362,7 +362,7 @@ pub extern "C" fn subscribe_event(handle: *mut PluginHandle, event: EventHandle)
 ///
 /// You will be notified when the unsubscribe is complete, but only if the event existed (and you
 /// were subscribed).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn unsubscribe_event(handle: *mut PluginHandle, event: EventHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
@@ -379,7 +379,7 @@ pub extern "C" fn unsubscribe_event(handle: *mut PluginHandle, event: EventHandl
 ///
 /// While there can be delays befor execution, but creation/deletion/other trigger calls are
 /// guaranteed to not be reordered
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn trigger_event(handle: *mut PluginHandle, event: EventHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
@@ -408,7 +408,7 @@ pub extern "C" fn trigger_event(handle: *mut PluginHandle, event: EventHandle) -
 /// - More dots can be used
 ///
 /// Similar to other functions, it is your job to deallocate the nullterminating string
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn generate_action_handle(name: *mut c_char) -> ReturnValue<ActionHandle> {
     let msg = get_string!(name);
 
@@ -431,7 +431,7 @@ pub extern "C" fn generate_action_handle(name: *mut c_char) -> ReturnValue<Actio
 /// Datarace restarts) that uniformly climbs, so newer ids are larger (it could overflow, but even
 /// at 1,000,000 actions per second it would take 580k years).  
 /// The id is used to identify the ActionCallback.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn trigger_action(handle: *mut PluginHandle, action_handle: ActionHandle, params: *mut Property, param_count: usize) -> ReturnValue<u64> {
     let han = get_handle_val!(handle);
 
@@ -459,7 +459,7 @@ pub extern "C" fn trigger_action(handle: *mut PluginHandle, action_handle: Actio
 ///
 /// The previous_action is consumed by this call, and it's params deallocated, so do not deallocate
 /// manually (or, replace the params in the action with null prior to calling this function).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn action_callback(handle: *mut PluginHandle, previous_action: Action, return_code: u64, params: *mut Property, param_count: usize) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
@@ -490,14 +490,14 @@ pub extern "C" fn action_callback(handle: *mut PluginHandle, previous_action: Ac
 
 /// Logs a null terminated String as a Info
 /// String is not deallocated, that is your job
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn log_info(handle: *mut PluginHandle, message: *mut c_char) {
     log_plugin_msg(handle, message, log::Level::Info);
 }
 
 /// Logs a null terminated String as a Error
 /// String is not deallocated, that is your job
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn log_error(handle: *mut PluginHandle, message: *mut c_char) {
     log_plugin_msg(handle, message, log::Level::Error);
 }
@@ -522,7 +522,7 @@ fn log_plugin_msg(handle: *mut PluginHandle, message: *mut c_char, log_level: lo
 
 /// This returns the ptr to a state you stored earlier,
 /// allowing you to have shared state in your plugin
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn get_state(handle: *mut PluginHandle) -> *mut c_void {
     let han = get_handle!(handle, std::ptr::null_mut());
 
@@ -541,7 +541,7 @@ pub extern "C" fn get_state(handle: *mut PluginHandle) -> *mut c_void {
 /// but this behavior may change in future releases to allow partial shutdown/restarts),
 /// if your plugin suffered an error (especially one that crashed the loader task too)
 /// we have no way to dispose it
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn save_state_now(handle: *mut PluginHandle, state: *mut c_void) {
     let han = get_handle!(handle);
 
@@ -564,7 +564,7 @@ pub extern "C" fn save_state_now(handle: *mut PluginHandle, state: *mut c_void) 
 /// Gets a Value at a certain index in this array.
 ///
 /// If the index is out of bounds returns a Property with Type None
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn get_array_value(array_handle: *mut ArrayValueHandle, index: usize) -> Property {
     let arr = if let Some(arr) = unsafe {
         array_handle.as_ref()  
@@ -584,7 +584,7 @@ pub extern "C" fn get_array_value(array_handle: *mut ArrayValueHandle, index: us
 ///
 /// You can only edit arrays you created.
 /// Trying to change value in Arrayhandles from properties of other plugin will return NotAuthenticated
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn set_array_value(handle: *mut PluginHandle, array_handle: *mut ArrayValueHandle, index: usize, value: Property) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
     let arr = if let Some(arr) = unsafe {
@@ -603,7 +603,7 @@ pub extern "C" fn set_array_value(handle: *mut PluginHandle, array_handle: *mut 
 }
 
 /// Returns the length of the array
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn get_array_length(array_handle: *mut ArrayValueHandle) -> usize {
     let arr = if let Some(arr) = unsafe {
         array_handle.as_ref()  
@@ -617,7 +617,7 @@ pub extern "C" fn get_array_length(array_handle: *mut ArrayValueHandle) -> usize
 }
 
 /// Returns the type for the data stored in the array
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn get_array_type(array_handle: *mut ArrayValueHandle) -> PropertyType {
     let arr = if let Some(arr) = unsafe {
         array_handle.as_ref()  
@@ -645,7 +645,7 @@ pub extern "C" fn get_array_type(array_handle: *mut ArrayValueHandle) -> Propert
 ///
 /// When the handle goes out of scope make sure to call `drop_array_handle`, this will only
 /// deallocate if you were the last holding it.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn create_array(handle: *mut PluginHandle, size: usize, init_value: Property) -> *mut ArrayValueHandle {
     let han = get_handle!(handle, std::ptr::null_mut());
 
@@ -664,7 +664,7 @@ pub extern "C" fn create_array(handle: *mut PluginHandle, size: usize, init_valu
 /// Useful for parallel execution.
 ///
 /// Be aware to call `drop_array_handle` precisely once on each handle
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn clone_array_handle(array_handle: *mut ArrayValueHandle) -> *mut ArrayValueHandle {
     let arr = if let Some(arr) = unsafe {
         array_handle.as_ref()  
@@ -681,7 +681,7 @@ pub extern "C" fn clone_array_handle(array_handle: *mut ArrayValueHandle) -> *mu
 /// Drops the passed in ArrayHandle.
 ///
 /// This does not necessarily drop the array, only if this was the last handle holding it (and no property is holding it)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn drop_array_handle(array_handle: *mut ArrayValueHandle) {
     if !array_handle.is_null() {
         unsafe {
@@ -695,7 +695,7 @@ pub extern "C" fn drop_array_handle(array_handle: *mut ArrayValueHandle) {
 /// Sends a message to the update function of your plugin.  
 /// This type of internal message is useful for sending messages from worker threads, for example
 /// that they failed, so you could restart them or shut the plugin down
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn send_internal_msg(handle: *mut PluginHandle, msg_code: i64) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
@@ -713,7 +713,7 @@ pub extern "C" fn send_internal_msg(handle: *mut PluginHandle, msg_code: i64) ->
 /// told your plugin id.  
 /// Obviously managing void pointers is risky business, both recipients have to be on the same
 /// package and understand what it stands for.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn send_ptr_msg_to_plugin(handle: *mut PluginHandle, target: u64, ptr: *mut c_void, reason: i64) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
@@ -732,7 +732,7 @@ pub extern "C" fn send_ptr_msg_to_plugin(handle: *mut PluginHandle, target: u64,
 ///
 /// This function also checks if the name does not contain any invalid characters (currently only .),
 /// but does not check if the plugin is loaded.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn get_foreign_plugin_id(handle: *mut PluginHandle, name: *mut c_char) -> PluginNameHash {
     let _han = get_handle!(handle, PluginNameHash { valid: false, id: 0 });
     // We only aquire a reference to stop people from passing in null
@@ -766,7 +766,7 @@ pub extern "C" fn get_foreign_plugin_id(handle: *mut PluginHandle, name: *mut c_
 /// as this function will forever wait for the unlock.
 ///
 /// Do not call this in the update or init function, as this can deadlock the plugin.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn lock_plugin(handle: *mut PluginHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
@@ -783,7 +783,7 @@ pub extern "C" fn lock_plugin(handle: *mut PluginHandle) -> DataStoreReturnCode 
 /// this can cause undefine behavior.
 ///
 /// Also a good idea not to use in the init and update functions.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn unlock_plugin(handle: *mut PluginHandle) -> DataStoreReturnCode {
     let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
 
@@ -799,7 +799,7 @@ pub extern "C" fn unlock_plugin(handle: *mut PluginHandle) -> DataStoreReturnCod
 /// reenqueued value
 ///
 /// Part of the point of this function is so the Message type is included in the generated header
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn reenqueue_message(handle: *mut PluginHandle, msg: Message) -> DataStoreReturnCode {
     let _han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
     let _msg = msg;
@@ -843,7 +843,7 @@ pub extern "C" fn reenqueue_message(handle: *mut PluginHandle, msg: Message) -> 
 /// There is a string contained, requiring deallocation
 /// 
 /// Part of the point of this function is so the PluginDescription type is included in the generated header
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn get_description(handle: *mut PluginHandle) -> PluginDescription {
     let han = get_handle!(handle, PluginDescription {
         id: 0,
@@ -863,7 +863,7 @@ pub extern "C" fn get_description(handle: *mut PluginHandle) -> PluginDescriptio
 
 /// It is the proper way to let every library deallocate memory it allocated.
 /// So this function is provided to allow you to deallocate strings the API passed to you
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn deallocate_string(ptr: *mut libc::c_char) {
     unsafe {
         drop(std::ffi::CString::from_raw(ptr))

@@ -1,13 +1,13 @@
 use std::str::FromStr;
 
 use axum::{extract::{Path, State}, response::{IntoResponse, Response}};
-use datarace_dashboard_spec::{DashElement, Dashboard, Property};
+use datarace_socket_spec::dashboard::{DashElement, Dashboard, Property};
 use log::error;
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 use tokio::fs::{self, DirEntry};
 
 use crate::utils::ValueCache;
-use datarace_dashboard_spec::socket::Value;
+use datarace_socket_spec::socket::Value;
 
 use super::{dashboard::WebDashboard, utils::DataStoreLocked, FsResourceError};
 
@@ -80,15 +80,23 @@ pub(super) async fn index(State(datastore): State<DataStoreLocked>) -> Markup {
     };
 
     use crate::built_info::*;
+    
     let cont = html!{
         h1 { "DataRace" }
         p {
             "Version: " (PKG_VERSION_MAJOR) "." (PKG_VERSION_MINOR) "." (PKG_VERSION_PATCH)
+            @if let Some(version) = GIT_VERSION {
+                " - " (version)
+            }
             br;
-            "Apiversion: " (crate::API_VERSION) " - " (CFG_OS)
+            "Build Date: " (BUILT_TIME_UTC)
+            br;
+            "Api Version: " (crate::API_VERSION)
+            br;
+            "Enviroment: " (CFG_OS) " - " (CFG_ENV)
+            br;
             br;
             "Plugins Loaded: " (plugin_count)
-            br;
             br;
             "Properties: " (properties_count)
             br;
@@ -246,7 +254,7 @@ pub(super) async fn edit_dashboard(Path(path): Path<String>, State(datastore): S
                 size_x: Property::Fixed(500),
                 size_y: Property::Fixed(400),
                 visible: Property::Fixed(true),
-                element: datarace_dashboard_spec::DashElementType::Square("red".to_string()) 
+                element: datarace_socket_spec::dashboard::DashElementType::Square("red".to_string()) 
             }],
         font_size: 12
     };

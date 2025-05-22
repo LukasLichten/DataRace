@@ -5,7 +5,7 @@ use highway::{HighwayHash, HighwayHasher, Key};
 
 use crate::{pluginloader::LoaderMessage, DataStoreReturnCode, PluginHandle, Property, PropertyType, PropertyValue};
 
-use datarace_dashboard_spec::socket::Value;
+use datarace_socket_spec::socket::Value;
 
 /// Simple way to aquire a String for a null terminating c_char ptr
 /// We do not optain ownership of the String, the owner has to deallocate it

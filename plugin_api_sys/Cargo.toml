@@ -1,11 +1,11 @@
 [package]
 name = "datarace_plugin_api_sys"
-version = "0.1.0"
-edition = "2021"
 links = "datarace"
-authors = ["Lukas 'DerGeneralFluff' Lichten"]
-license = "GPL-3.0"
-repository = "https://github.com/LukasLichten/DataRace"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Sys crate that binds to libdatarace library"
 
 [build-dependencies]

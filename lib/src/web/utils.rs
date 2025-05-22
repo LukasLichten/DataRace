@@ -4,7 +4,7 @@ use kanal::{AsyncReceiver, AsyncSender};
 use socketioxide::socket::Sid;
 use tokio::sync::RwLock;
 use crate::{datastore::DataStore, ActionHandle, PropertyHandle};
-use datarace_dashboard_spec::socket::{Action, PropertyHandle as WebPropertyHandle, ActionHandle as WebActionHandle};
+use datarace_socket_spec::socket::{Action, PropertyHandle as WebPropertyHandle, ActionHandle as WebActionHandle};
 
 pub(super) type DataStoreLocked = &'static RwLock<DataStore>;
 pub(super) type SocketDataRef = &'static SocketData;

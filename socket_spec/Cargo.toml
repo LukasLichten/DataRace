@@ -1,0 +1,12 @@
+[package]
+name = "datarace_socket_spec"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Defines the structs for Dashboards"
+
+[dependencies]
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = "^1.0"

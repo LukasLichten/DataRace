@@ -22,7 +22,7 @@ static mut IS_RUNTIME: bool = false;
 
 /// Used by the main executable to start the programm
 /// Do NOT call this as a plugin
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn run() {
     unsafe {
         if IS_RUNTIME {
@@ -120,7 +120,7 @@ pub use api_types::*;
 /// This function acts differently to prevent plugins from changing their API version after they
 /// were compiled.
 /// However it exists to allow retrieval of the API version against which you are compiling
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn compiletime_get_api_version() -> u64 {
     if unsafe {
         !IS_RUNTIME
@@ -147,7 +147,7 @@ pub struct PluginNameHash {
 /// This function also checks if the name does not contain any invalid characters (currently only .)
 ///
 /// The cstring pointer has to be deallocated by you.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn compiletime_get_plugin_name_hash(ptr: *mut libc::c_char) -> PluginNameHash {
     if unsafe {
         IS_RUNTIME

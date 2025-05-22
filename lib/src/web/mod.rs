@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::{atomic::AtomicBool, Arc}};
 
 use axum::{http::StatusCode, response::{IntoResponse, Response}, routing::get};
-use datarace_dashboard_spec::Dashboard;
+use datarace_socket_spec::dashboard::Dashboard;
 use log::{debug, error, info};
 use tokio::{fs, net::TcpListener};
 

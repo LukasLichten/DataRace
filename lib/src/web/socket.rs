@@ -4,7 +4,7 @@ use tokio::time::Duration;
 use log::{debug, error, trace};
 use serde::{Deserialize, Serialize};
 use socketioxide::{extract::{Data, SocketRef, State}, SocketIo};
-use datarace_dashboard_spec::socket::{Action, UpdatePackage, Value};
+use datarace_socket_spec::socket::{Action, UpdatePackage, Value};
 
 use crate::{utils::{ValueCache, ValueContainer}, PropertyHandle};
 

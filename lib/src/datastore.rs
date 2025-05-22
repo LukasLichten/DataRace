@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use kanal::{AsyncSender, Sender};
 
-use datarace_dashboard_spec::socket::Action as WebAction;
+use datarace_socket_spec::socket::Action as WebAction;
 
 use crate::{events::EventMessage, pluginloader::LoaderMessage, utils::{self, PluginStatus, ValueContainer}, web::SocketChMsg, Action, DataStoreReturnCode, PluginHandle, PropertyHandle};
 

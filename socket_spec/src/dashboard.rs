@@ -2,8 +2,6 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-pub mod socket;
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Dashboard {
     pub name: String,

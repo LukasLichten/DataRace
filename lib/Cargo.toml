@@ -1,10 +1,10 @@
 [package]
 name = "datarace"
-version = "0.1.0"
-edition = "2021"
-authors = ["Lukas 'DerGeneralFluff' Lichten"]
-license = "GPL-3.0"
-repository = "https://github.com/LukasLichten/DataRace"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Core DataRace Library, loads plugins, stores data, and serves the webserver"
 
 [lib]
@@ -12,7 +12,7 @@ crate-type = ["cdylib"]
 bench = false
 
 [build-dependencies]
-built = "0.7"
+built = { version= "0.8", features = ["git2", "chrono"] }
 cbindgen = "^0.28"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -33,4 +33,4 @@ socketioxide = { version = "0.16", features = ["state"] }
 atomic-wait = "1.1.0"
 futures-lite = "2.6"
 maud = { version = "0.27", features = ["axum"] }
-datarace_dashboard_spec = { path = "../dashboard_spec" }
+datarace_socket_spec = { path = "../socket_spec" }
