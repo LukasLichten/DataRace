@@ -25,7 +25,7 @@ fn main() {
     
 
     // There should be a more elgant way to get the same name as the libary being build
-    let lib_name = if cfg!(target_os = "linux") {
+    let lib_name = if env::var("CARGO_CFG_TARGET_OS").unwrap() == "linux" {
         "libdatarace"
     } else {
         "datarace"

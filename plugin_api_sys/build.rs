@@ -28,7 +28,7 @@ pub fn main() {
         let target = lib.parent().unwrap().join(name.clone());
         
         if !target.is_file() {
-            if cfg!(target_os = "linux") {
+            if env::var("CARGO_CFG_TARGET_OS").unwrap() == "linux" {
                 // Header file should be in /usr/include
                 let mut target = lib.parent().unwrap().parent().unwrap().to_path_buf();
                 target.push("include");
@@ -98,7 +98,7 @@ fn find_and_bind_lib(mut try_env: bool, tried_output: bool) -> PathBuf {
             println!("cargo:warning=Unable to process path provided in '{}', attempting default...", ENV_LIB_PATH);
             return find_and_bind_lib(false, tried_output);
         }
-    } else if cfg!(target_os = "linux") && tried_output {
+    } else if env::var("CARGO_CFG_TARGET_OS").unwrap() == "linux" && tried_output {
         try_env = false;
         PathBuf::try_from("/usr/lib").expect("Since when is /usr/lib an invalid path?")
     } else {
@@ -109,7 +109,7 @@ fn find_and_bind_lib(mut try_env: bool, tried_output: bool) -> PathBuf {
 
 
     // Testing if Library is present
-    let lib = if cfg!(target_os = "linux") {
+    let lib = if env::var("CARGO_CFG_TARGET_OS").unwrap() == "linux" {
         let test = bin.join("libdatarace.so");
         if !test.exists() {
             if try_env {
@@ -128,8 +128,13 @@ fn find_and_bind_lib(mut try_env: bool, tried_output: bool) -> PathBuf {
             println!("cargo:rerun-if-changed={}",test.to_str().unwrap());
             test
         }
-    } else if cfg!(target_os = "windows") {
-        let test = bin.join("datarace.dll.lib");
+    } else if env::var("CARGO_CFG_TARGET_OS").unwrap() == "windows" {
+        let test = if env::var("CARGO_CFG_TARGET_ENV").unwrap() == "msvc" {
+            bin.join("datarace.dll.lib")
+        } else {
+            bin.join("datarace.dll")
+        };
+
         if !test.exists() {
             if try_env {
                 // We failed to find the library where specified, but we can still retry default
@@ -150,7 +155,7 @@ fn find_and_bind_lib(mut try_env: bool, tried_output: bool) -> PathBuf {
     };
 
     println!("cargo:rustc-link-search={}",bin.to_str().unwrap());
-    if cfg!(target_os = "windows") {
+    if env::var("CARGO_CFG_TARGET_OS").unwrap() == "windows" && env::var("CARGO_CFG_TARGET_ENV").unwrap() == "msvc" {
         // Windows linker wants the .lib, rust builds *.dll, *.dll.lib, etc.
         // But if we just give it the normal name it will look for *.lib, so this is the work around for it
         println!("cargo:rustc-link-lib=dylib=datarace.dll");
