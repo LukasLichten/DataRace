@@ -148,7 +148,7 @@ pub fn plugin_descriptor_fn(input: TokenStream) -> TokenStream {
     };
 
     quote! {
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn get_plugin_description() -> datarace_plugin_api::reexport::PluginDescription {
     datarace_plugin_api::reexport::PluginDescription {
         id: #id,
@@ -168,7 +168,7 @@ pub extern "C" fn get_plugin_description() -> datarace_plugin_api::reexport::Plu
 pub fn free_string_fn(_input: TokenStream) -> TokenStream {
     quote! {
         
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn free_string(ptr: *mut std::os::raw::c_char) {
     unsafe {
         drop(std::ffi::CString::from_raw(ptr));

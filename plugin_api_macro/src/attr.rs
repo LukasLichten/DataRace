@@ -181,7 +181,7 @@ pub(crate) fn plugin_init(_attr: TokenStream, item: TokenStream) -> TokenStream 
 
     // Code generation
     quote! {
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn init(handle: *mut datarace_plugin_api::reexport::PluginHandle) -> std::os::raw::c_int {
     #(#attrs)*
     #sig #block
@@ -332,7 +332,7 @@ pub(crate) fn plugin_update(_attr: TokenStream, item: TokenStream) -> TokenStrea
 
     // Code generation
     quote! {
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn update(handle: *mut datarace_plugin_api::reexport::PluginHandle, msg: datarace_plugin_api::reexport::Message) -> std::os::raw::c_int {
     #(#attrs)*
     #sig #block

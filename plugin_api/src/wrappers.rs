@@ -24,14 +24,14 @@ impl PluginHandle {
     /// Raw access to the state pointer.
     /// If you want a save and more convient way check out macros::get_state! for more info
     pub unsafe fn get_state_ptr(&self) -> *mut c_void {
-        sys::get_state(self.ptr)
+        unsafe { sys::get_state(self.ptr) }
     }
 
     /// Raw access to the state pointer.
     /// If you want to use it in a more convient way, check out macros::save_state_now! and
     /// macros::plugin_init for more info.
     pub unsafe fn store_state_ptr_now(&self, ptr: *mut c_void) {
-        sys::save_state_now(self.ptr, ptr);
+        unsafe { sys::save_state_now(self.ptr, ptr); }
     }
 }
 
@@ -792,7 +792,7 @@ pub(crate) unsafe fn vec_to_property_array(arr: Vec<Property>) -> (*mut sys::Pro
     let mut index = 0;
     for item in arr {
         // Should not overflow due to arr.len()
-        let target = ptr.offset(index);
+        let target = unsafe { ptr.offset(index) };
 
         let prop_c = item.to_c();
         unsafe { target.write(prop_c) };
