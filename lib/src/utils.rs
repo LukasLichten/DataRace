@@ -1,5 +1,6 @@
+use hex::{FromHex, FromHexError, ToHex};
 use libc::c_char;
-use std::{ffi::{CStr, CString}, fmt::Debug, sync::{atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering}, Arc, RwLock}};
+use std::{ffi::{CStr, CString}, fmt::Debug, hash::Hash, sync::{atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering}, Arc, RwLock}};
 use kanal::{Sender, Receiver};
 use highway::{HighwayHash, HighwayHasher, Key};
 
@@ -1047,4 +1048,103 @@ pub(crate) fn generate_action_name_hash(str: &str) -> Option<u64> {
     hasher.append(str.as_bytes());
 
     Some(hasher.finalize64())
+}
+
+/// Generates the hash of a dashboard
+pub(crate) fn generate_dashboard_hash(dash: &datarace_socket_spec::dashboard::Dashboard, secret: [u64;4]) -> [u64;4] {
+    let mut hasher = HighwayHasher::new(Key(secret));
+
+    dash.hash(&mut hasher);
+
+    hasher.finalize256()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct U256(pub [u64;4]);
+
+macro_rules! from_be_arr {
+    ($value:ident,$index:literal) => {
+        u64::from_be_bytes([$value[$index],$value[$index + 1],$value[$index + 2],$value[$index + 3],$value[$index + 4],
+        $value[$index + 5],$value[$index + 6],$value[$index + 7]])
+    };
+}
+
+impl From<[u8;32]> for U256 {
+    fn from(value: [u8;32]) -> Self {
+        U256([
+            from_be_arr!(value,0),
+            from_be_arr!(value,8),
+            from_be_arr!(value,16),
+            from_be_arr!(value,24),
+        ])
+    }
+}
+
+macro_rules! to_be_arr {
+    ($target:ident, $source:expr, $index:literal) => {
+        let v = $source;
+        $target[$index] = v[0];
+        $target[$index + 1] = v[1];
+        $target[$index + 2] = v[2];
+        $target[$index + 3] = v[3];
+        $target[$index + 4] = v[4];
+        $target[$index + 5] = v[5];
+        $target[$index + 6] = v[6];
+        $target[$index + 7] = v[7];
+    };
+}
+
+impl Into<[u8;32]> for U256 {
+    fn into(self) -> [u8;32] {
+        let mut res = [0_u8;32];
+        to_be_arr!(res, self.0[0].to_be_bytes(), 0);
+        to_be_arr!(res, self.0[1].to_be_bytes(), 8);
+        to_be_arr!(res, self.0[2].to_be_bytes(), 16);
+        to_be_arr!(res, self.0[3].to_be_bytes(), 24);
+        
+        
+        res
+    }
+}
+
+impl FromHex for U256 {
+    type Error = FromHexError;
+
+    fn from_hex<T: AsRef<[u8]>>(hex: T) -> Result<Self, Self::Error> {
+        let values = <[u8;32] as FromHex>::from_hex(hex)?;
+
+        Ok(U256::from(values))
+    }
+}
+
+impl ToHex for U256 {
+    fn encode_hex<T: std::iter::FromIterator<char>>(&self) -> T {
+        let v: [u8;32] = self.clone().into();
+        v.encode_hex()
+    }
+
+    fn encode_hex_upper<T: std::iter::FromIterator<char>>(&self) -> T {
+        let v: [u8;32] = self.clone().into();
+        v.encode_hex_upper()
+    }
+}
+
+#[test]
+fn u256_from_to_bytes() {
+    let source = U256([123456789, 77, u64::MAX-5000, 9]);
+    
+    let conv: [u8;32] = source.into();
+    let res: U256 = conv.into();
+
+    assert_eq!(source, res);
+}
+
+#[test]
+fn u256_hex_and_back() {
+    let source = U256([u64::MAX-2000, 8882, 0, 987654321]);
+    
+    let h = source.encode_hex::<String>();
+    let res = U256::from_hex(h);
+
+    assert_eq!(Ok(source), res);
 }

@@ -392,7 +392,7 @@ impl Action {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ActionHandle {
     pub plugin: u64,
     pub action: u64

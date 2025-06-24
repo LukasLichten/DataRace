@@ -1,12 +1,14 @@
+use hex::ToHex;
 use log::error;
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 
-use datarace_socket_spec::dashboard::{Action, DashElement, DashElementType, Dashboard, Property, Text};
+use datarace_socket_spec::{dashboard::{Action, DashElement, DashElementType, Dashboard, Property, Text}, socket::DashboardAuth};
 
-use crate::PropertyHandle;
+use crate::{utils::U256, PropertyHandle};
 
 pub(crate) trait WebDashboard {
-    fn generate_dashboard(&self) -> Markup;
+    fn generate_dashboard(&self, secret: U256) -> Markup;
+    fn generate_token(&self, secret: U256) -> U256;
 }
 
 fn dashboard_header(name: &String) -> Markup {
@@ -18,7 +20,11 @@ fn dashboard_header(name: &String) -> Markup {
 } 
 
 impl WebDashboard for Dashboard {
-    fn generate_dashboard(&self) -> Markup {
+    fn generate_token(&self, secret: U256) -> U256 {
+        U256(crate::utils::generate_dashboard_hash(self, secret.0))
+    }
+
+    fn generate_dashboard(&self, secret: U256) -> Markup {
         let mut names = vec![];
         for e in &self.elements {
             names = match e.gather_names(names) {
@@ -27,11 +33,20 @@ impl WebDashboard for Dashboard {
                     let out = format!("Failed to render Dashboard {} due to element name issues:\n{}", self.name, err);
                     error!("{}", &out);
                     return html!{
-                        (dashboard_header(&out))
+                        (dashboard_header(&"Error".to_string()))
+                        (out)
                     };
                 }
             }
         }
+
+        let auth = match serde_json::to_string(&DashboardAuth { name: self.name.clone(), token: self.generate_token(secret).encode_hex_upper() }) {
+            Ok(auth) => auth,
+            Err(e) => return html!{
+                (dashboard_header(&"Error".to_string()))
+                (e.to_string())
+            }
+        };
 
         html! {
             (dashboard_header(&self.name))
@@ -192,19 +207,19 @@ impl WebDashboard for Dashboard {
                     "SOCKET.emit('trigger_action', action);"
                 "}"
 
-                "function triggerTextInputAction(id, action_handle) {"
-                    
-                "}"
-
                 @for item in &self.elements {
                     (item.generate_resize_js())
                     (item.generate_update_js())
                 }
 
-                "SOCKET.on('require-auth', function() {"
+                "SOCKET.on('require_auth', function() {"
                     "console.log('Server requested auth');"
-                    (format!("SOCKET.emit('auth-dashboard', '{}');", &self.name))
+                    (PreEscaped(format!("SOCKET.emit('auth_dashboard', {});", auth)))
                     "DISCO.style.display = 'none';"
+                "});"
+
+                "SOCKET.on('require_reload', function() {"
+                    "location.reload();"
                 "});"
 
             }

@@ -232,9 +232,15 @@ pub(super) async fn settings() -> Markup {
 
 pub(super) async fn load_dashboard(Path(path): Path<String>, State(datastore): State<DataStoreLocked>) -> Response {
     match super::get_dashboard(datastore, path.clone()).await {
-        Ok(dash) =>  html!{ 
-            (dash.generate_dashboard()) 
-        }.into_response(),
+        Ok(dash) =>  {
+            let ds_r = datastore.read().await;
+            let secret = ds_r.dashboard_hasher_secret.clone();
+            drop(ds_r);
+
+            html!{ 
+                (dash.generate_dashboard(secret)) 
+            }.into_response()
+        },
         Err(e) => e.into_response(path)
     }
 }

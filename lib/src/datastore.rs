@@ -1,13 +1,14 @@
 use std::{collections::{hash_map, HashMap}, path::PathBuf, str::FromStr, sync::atomic::AtomicU64};
 
 use log::info;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use kanal::{AsyncSender, Sender};
 
 use datarace_socket_spec::socket::Action as WebAction;
 
-use crate::{events::EventMessage, pluginloader::LoaderMessage, utils::{self, PluginStatus, ValueContainer}, web::SocketChMsg, Action, DataStoreReturnCode, PluginHandle, PropertyHandle};
+use crate::{events::EventMessage, pluginloader::LoaderMessage, utils::{self, PluginStatus, ValueContainer, U256}, web::SocketChMsg, Action, DataStoreReturnCode, PluginHandle, PropertyHandle};
 
 /// This is our centralized State
 pub(crate) struct DataStore {
@@ -25,11 +26,17 @@ pub(crate) struct DataStore {
     shutdown: bool,
 
     event_channel: kanal::Sender<EventMessage>,
-    websocket_channel: kanal::AsyncSender<SocketChMsg>
+    websocket_channel: kanal::AsyncSender<SocketChMsg>,
+
+    // Secrets
+    pub(crate) dashboard_hasher_secret: U256
 }
 
 impl DataStore {
     pub fn new(event_channel: kanal::Sender<EventMessage>, websocket_channel: kanal::AsyncSender<SocketChMsg>) -> RwLock<DataStore> {
+        let mut ran = rand::rng();
+        let secret: [u64;4] = ran.random();
+
         RwLock::new(DataStore {
             plugins: HashMap::default(),
             properties: HashMap::default(),
@@ -40,7 +47,9 @@ impl DataStore {
             next_action_id: AtomicU64::new(0),
 
             event_channel,
-            websocket_channel
+            websocket_channel,
+
+            dashboard_hasher_secret: U256(secret)
         })
     }
 

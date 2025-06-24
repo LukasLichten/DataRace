@@ -4,7 +4,7 @@ use tokio::time::Duration;
 use log::{debug, error, trace};
 use serde::{Deserialize, Serialize};
 use socketioxide::{extract::{Data, SocketRef, State}, SocketIo};
-use datarace_socket_spec::socket::{Action, UpdatePackage, Value};
+use datarace_socket_spec::socket::{Action, DashboardAuth, UpdatePackage, Value};
 
 use crate::{utils::{ValueCache, ValueContainer}, PropertyHandle};
 
@@ -30,21 +30,33 @@ pub(super) async fn create_socketio_layer(datastore: DataStoreLocked, websocket_
 }
 
 async fn on_connect(socket: SocketRef) {
+    fn error_log(send_result: Result<(), socketioxide::SendError>) {
+        if let Err(e) = send_result {
+            error!("Emitting Event failed: {e}");
+        }
+    }
+
     debug!("Someone is trying to connect, {}", socket.id);
 
     // For some reason I can't serialize the Plugin version through Serializer,
     // the function just isn't called
-    socket.on("auth-dashboard", |socket: SocketRef, Data(name): Data<String>, State(store): State<SocketDataRef>| async move {
-        debug!("{} socket trying to auth as dashboard {}", socket.id, &name);
+    socket.on("auth_dashboard", |socket: SocketRef, Data(auth): Data<DashboardAuth>, State(store): State<SocketDataRef>| async move {
+        debug!("{} socket trying to auth as dashboard {}", socket.id, &auth.name);
 
         if store.get_auth(&socket.id).await.is_some() {
             // This is an error, you should not be able to auth twice
-            error!("Already Authericed");
+            error!("Already Authenticated");
             return;
         }
 
-        store.insert_dashboard(socket.id, name.clone()).await;
-        let _ = socket.join(format!("dash.{}", name));
+        if store.insert_dashboard(socket.id, auth.name.clone(), auth.token.clone()).await {
+            trace!("Authentication succeeded");
+            socket.join(format!("dash.{}", auth.name));
+        } else {
+            debug!("Dashboard auth failed, emitting reload");
+            trace!("Failed auth token was: {}", auth.token);
+            error_log(socket.emit("require_reload", &()));
+        }
     });
 
     socket.on("trigger_action", |socket: SocketRef, Data(action): Data<Action>, State(store): State<SocketDataRef>| async move {
@@ -85,7 +97,7 @@ async fn on_connect(socket: SocketRef) {
         debug!("Left *big sad*");
     });
     
-    let _ = socket.emit("require-auth", &());
+    error_log(socket.emit("require_auth", &()));
 }
 
 const UPDATE_RATE: Duration = Duration::from_millis(10);

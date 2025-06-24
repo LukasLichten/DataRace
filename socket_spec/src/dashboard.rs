@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Hash)]
 pub struct Dashboard {
     pub name: String,
     pub elements: Vec<DashElement>,
@@ -22,6 +22,16 @@ impl Dashboard {
         res
     }
 
+    pub fn list_actions(&self) -> HashSet<String> {
+        let mut res = HashSet::<String>::new();
+
+        for e in &self.elements {
+            e.list_actions(&mut res);
+        }
+
+        res
+    }
+
     pub fn all_formatter_scripts(&self) -> Vec<(String, String)> {
         let mut list = Vec::new();
         for e in &self.elements {
@@ -32,7 +42,7 @@ impl Dashboard {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Hash)]
 pub struct DashElement {
     pub name: String,
     pub x: Property<i64>,
@@ -129,6 +139,24 @@ impl DashElement {
         res
     }
 
+    /// Appeneds the actions contained in this DashElement (if any)
+    fn list_actions(&self, all: &mut HashSet<String>) {
+        match &self.element {
+            DashElementType::Folder(elements) => {
+                for e in elements {
+                    e.list_actions(all);
+                }
+            },
+            DashElementType::Button { action, text: _ } => {
+                action.add_action_name(all);
+            },
+            DashElementType::TextInput { action, text: _ } => {
+                action.add_action_name(all);
+            },
+            _ => ()
+        }
+    }
+
     fn all_formatter_scripts(&self) -> Vec<(String, String)> {
         let mut list = Vec::new();
         let name = match self.normalize_name() {
@@ -168,7 +196,7 @@ impl DashElement {
 
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Hash)]
 pub enum DashElementType {
     Square(String),
     Text(Text),
@@ -177,7 +205,7 @@ pub enum DashElementType {
     TextInput{ action: Action, text: Text }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Hash)]
 pub struct Text {
     pub text: Property<String>,
     pub font_size: Option<Property<f64>>,
@@ -273,6 +301,55 @@ impl<T> Property<T> {
     }
 }
 
+macro_rules! property_impl_hash {
+    ($type: ident) => {
+impl std::hash::Hash for Property<$type> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Property::Fixed(res) => res.hash(state),
+            Property::Computed(func) => {
+                func.hash(state);
+            },
+            Property::Formated { source, formater } => {
+                source.hash(state);
+                formater.hash(state);
+            },
+            Property::Deref { source, index } => {
+                source.hash(state);
+                index.hash(state);
+            }
+        }
+    }
+}
+    };
+}
+
+property_impl_hash!(i64);
+property_impl_hash!(bool);
+property_impl_hash!(String);
+
+// We have to do this seperate because rust being rust
+impl std::hash::Hash for Property<f64> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Property::Fixed(res) => {
+                res.to_bits().hash(state);
+            },
+            Property::Computed(func) => {
+                func.hash(state);
+            },
+            Property::Formated { source, formater } => {
+                source.hash(state);
+                formater.hash(state);
+            },
+            Property::Deref { source, index } => {
+                source.hash(state);
+                index.hash(state);
+            }
+        }
+    }
+}
+
 impl<T> Property<T> where T: Default + Clone {
     pub fn get_static_value(&self) -> T {
         match self {
@@ -290,10 +367,19 @@ impl<T> Property<T> where T: Default + Clone {
     }
 }
 
-#[derive(Debug,Clone,Serialize,Deserialize)]
+#[derive(Debug,Clone,Serialize,Deserialize, Hash)]
 pub enum Action {
     Plugin(String),
     None
 }
 
-
+impl Action {
+    fn add_action_name(&self, all: &mut HashSet<String>) {
+        match self {
+            Self::Plugin(name) => {
+                all.insert(name.clone());
+            },
+            Self::None => ()
+        }
+    }
+}

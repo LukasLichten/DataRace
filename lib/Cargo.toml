@@ -34,3 +34,5 @@ atomic-wait = "1.1.0"
 futures-lite = "2.6"
 maud = { version = "0.27", features = ["axum"] }
 datarace_socket_spec = { path = "../socket_spec" }
+rand = "0.9"
+hex = "0.4"
