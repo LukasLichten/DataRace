@@ -1,7 +1,7 @@
 .phony: all build build-exec plugin-api test-plugin clean test help release
 
 define exec
-	LD_LIBRARY_PATH=./target/debug/ ./target/debug/launch_datarace
+	LD_LIBRARY_PATH=./target/debug/ ./target/debug/launch_datarace --local-dev -l Debug
 endef
 
 all: plugin-api
@@ -20,18 +20,18 @@ plugin-api:
 	cd lib && cargo build
 
 test-plugin:
-	mkdir -p plugins
+	mkdir -p Plugins
 	cd test_plugin && cargo build
-	cp target/debug/libtest_plugin.so plugins/
+	cp target/debug/libtest_plugin.so Plugins/
 
 sample-plugin:
-	mkdir -p plugins
+	mkdir -p Plugins
 	cd sample_plugin && cargo build
-	cp target/debug/libsample_plugin.so plugins/
+	cp target/debug/libsample_plugin.so Plugins/
 
 clean:
 	cargo clean
-	rm -rf ./plugins
+	rm -rf ./Plugins
 
 test: 
 	cargo test -p datarace

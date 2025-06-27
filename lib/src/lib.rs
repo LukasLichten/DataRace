@@ -1,5 +1,6 @@
 use std::sync::{atomic::AtomicBool, Arc};
 
+use datastore::Config;
 use log::{info, error, debug};
 use tokio::runtime::Builder;
 
@@ -18,6 +19,8 @@ mod events;
 mod pluginloader;
 pub(crate) mod utils;
 
+pub(crate) mod plattform;
+
 static mut IS_RUNTIME: bool = false;
 
 /// Used by the main executable to start the programm
@@ -32,32 +35,40 @@ pub extern "C" fn run() {
         IS_RUNTIME = true;
     }
 
+    if let Some(init_conf) = plattform::read_cmd_args() {
+        env_logger::builder().target(env_logger::Target::Stdout).filter_level(init_conf.log_level).init();
 
-    let log_level = log::LevelFilter::Debug;
-    env_logger::builder().filter_level(log_level).init();
+        if let Some((config, errors)) = plattform::read_config(init_conf) {
+            match Builder::new_multi_thread().enable_all().build() {
+                Ok(rt) => {
+                    let res = rt.block_on(internal_main(config, errors));
 
-    if let Ok(rt) = Builder::new_multi_thread().enable_all().build() {
-        let res = rt.block_on(internal_main());
-
-        if let Err(e) = res {
-            error!("DataRace crashed: {}", e);
+                    if let Err(e) = res {
+                        error!("DataRace crashed: {}", e);
+                    } else {
+                        info!("Shutting down...");
+                    }
+                    rt.shutdown_timeout(std::time::Duration::from_secs(2));
+                    info!("Done");
+                },
+                Err(e) => {
+                    error!("Unable to launch tokio async runtime: {e}");
+                    error!("Aborting!");
+                }
+            }
         } else {
-            info!("Shutting down...");
+            error!("DataRace not launched due to configuartion errors");
         }
-        rt.shutdown_timeout(std::time::Duration::from_secs(2));
-        info!("Done");
-    } else {
-        error!("Unable to launch tokio async runtime, aborting launch")
     }
 
 }
 
-async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
+async fn internal_main(config: Config, errors: bool) -> Result<(), Box<dyn std::error::Error> > {
     info!("Launching DataRace version {}.{}.{} (apiversion: {})...", built_info::PKG_VERSION_MAJOR, built_info::PKG_VERSION_MINOR, built_info::PKG_VERSION_PATCH, API_VERSION);
 
     let (event_loop, event_channel) = events::create_event_task();
     let (websocket_ch_sender, websocket_channel_recv) = web::create_websocket_channel();
-    let datastore: &'static tokio::sync::RwLock<datastore::DataStore>  = Box::leak(Box::new(datastore::DataStore::new(event_channel, websocket_ch_sender)));
+    let datastore: &'static tokio::sync::RwLock<datastore::DataStore>  = Box::leak(Box::new(datastore::DataStore::new(event_channel, websocket_ch_sender, config, errors)));
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let sh_clone = shutdown.clone();
@@ -82,22 +93,26 @@ async fn internal_main() -> Result<(), Box<dyn std::error::Error> > {
 
     // Handles closing the plugin tasks
     let handle = tokio::spawn(async move {
-        while let Some(res) = plugin_set.join_next().await {
-            match res {
-                Ok(fin) => if let Err(name) = fin {
-                    error!("Plugin {} has crashed!", name);
-                },
-                Err(e) => {
-                    // Here would be to insert tokio::task::Id to determine the failed task and
-                    // start shutting down the plugin
-                    // But as task::Id is in tokio_unstable it causes recompile of tokio every
-                    // single build, with the current development process unsutainable
-                    error!("Plugin Runner Task (and it's contained Plugin) Crashed: {}", e)
+        if !plugin_set.is_empty() {
+            while let Some(res) = plugin_set.join_next().await {
+                match res {
+                    Ok(fin) => if let Err(name) = fin {
+                        set_errors!(datastore);
+                        error!("Plugin {} has crashed!", name);
+                    },
+                    Err(e) => {
+                        // Here would be to insert tokio::task::Id to determine the failed task and
+                        // start shutting down the plugin
+                        // But as task::Id is in tokio_unstable it causes recompile of tokio every
+                        // single build, with the current development process unsutainable
+                        set_errors!(datastore);
+                        error!("Plugin Runner Task (and it's contained Plugin) Crashed: {}", e)
+                    }
                 }
             }
-        }
 
-        debug!("All Plugins have shut down");
+            debug!("All Internal Plugins have shut down");
+        }
     });
 
     web::run_webserver(datastore, websocket_channel_recv, sh_clone).await?;

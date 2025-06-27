@@ -1,5 +1,5 @@
 ## DataRace
-Extendable blazingly fast * multiplattform Realtime Data processing and visualization Engine.  
+Extendable fast * multiplattform Realtime Data processing and visualization Engine.  
 Perfect for Simracing, Flightsim and Streaming.  
   
 Written in Rust with a C ABI plugin api to allow you to write plugins in any language,
@@ -13,6 +13,7 @@ or talk to the Socket.io api instead.
 - Loading of Plugins out of the plugins folder
 - Implement basic API handles for data and messaging
 - Flesh out wrapper and sample plugin
+- config files and cmd args
   
 In Progess:  
 - Implement socket.io server
@@ -20,7 +21,6 @@ In Progess:
 - Script Engine
   
 *Far future*:
-- cmd/env args, config files
 - Build native game reader
 - Build dashboard editor
 - Implementing the option to export telemetry logs
@@ -28,11 +28,11 @@ In Progess:
 - Stabilize API lol
 
 Some small features are up for consideration, ready to implement,
-but to stop myself from getting bucked by scope creep more then necessary I have instead put them [here](docs/MayImplement.md)
+but to stop myself from getting bucked down by scope creep more then already I have instead put them [here](docs/MayImplement.md)
 
 ## Known Issues
 Replacing the lib of a plugin during runtime will lead to segfault as soon as any code within the plugin 
-is executed (be that and update, or a seperate thread running in a loop).
+is executed (be that an update, or a seperate thread running in a loop).
 
 ## Building
 ### Build Requirements
@@ -102,6 +102,8 @@ Use this powershell script:
 - `plugin_api_macro`: Proc-Macro Crate, available through `plugin_api::macros`
 - `plugin_api`: Provides a wrapper around the sys raw functions. Perfect for implementing plugins.
 - `sample_plugin`: An example plugin in rust using the wrapper
+- `test_plugin`: A plugin designed to test various features of the api
+- `socket_spec`: Crate that defines various structs for talking to the websocket, but also for loading Dashboards
   
 Rust typically leaves libraries as code that is compiled into the final binary,
 so this way of compiling a central api library into C ABI, and then having to use a regular rust crate to link it back (and another to provide a smooth interaction) is weird.  
@@ -109,4 +111,4 @@ But this is all done for modularity, because having to for every new plugin inst
 
 ### Licensing
 This project is Licensed under GPLv3.  
-Expection is the `sample_plugin`, which can be licensed under GPLv3 or MIT (to avoid restricting plugin developers into a specfic license just because they starter off with the example).  
+Expection is the `sample_plugin` and `test_plugin`, which can be licensed under GPLv3 or MIT (to avoid restricting plugin developers into a specfic license just because they starter off with the example).  

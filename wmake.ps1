@@ -6,15 +6,15 @@ $root = Get-Location
 
 # Building Lib
 Set-Location .\lib
-cargo build --release
+cargo build
 Set-Location $root
 
 # Building Test Plugin
-Set-Location .\sample_plugin
-cargo build --release
+Set-Location .\test_plugin
+cargo build
 Set-Location $root
-New-Item plugins -ItemType Directory -Force
-Copy-Item .\target\release\sample_plugin.dll .\plugins\ -Force
+New-Item Plugins -ItemType Directory -Force
+Copy-Item .\target\debug\sample_plugin.dll .\Plugins\ -Force
 
 # Building and running main
-cargo run --release
+cargo run -- --local-dev --l DEBUG

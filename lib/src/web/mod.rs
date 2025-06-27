@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::{atomic::AtomicBool, Arc}};
 
 use axum::{http::StatusCode, response::{IntoResponse, Response}, routing::get};
 use datarace_socket_spec::dashboard::Dashboard;
-use log::{debug, error, info};
+use log::{debug, info};
 use tokio::{fs, net::TcpListener};
 
 use utils::DataStoreLocked;
@@ -14,8 +14,21 @@ mod socket;
 mod pages;
 mod dashboard;
 
+pub(crate) const DEFAULT_IP: &str = "0.0.0.0";
+pub(crate) const DEFAULT_PORT: u16 = 3939;
+
 pub(crate) async fn run_webserver(datastore: DataStoreLocked, websocket_ch_recv: WebSocketChReceiver, shutdown: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
-    debug!("Setting up webserver...");
+    let ds_r = datastore.read().await;
+    let config = ds_r.get_config().clone();
+    drop(ds_r);
+
+    if config.disable_web_server {
+        info!("Webserver Disabled");
+        return Ok(());
+    }
+    let addr = format!("{}:{}", config.web_server_ip, config.web_server_port);
+
+    debug!("Setting up webserver ({})...", addr.as_str());
     let layer = socket::create_socketio_layer(datastore, websocket_ch_recv).await;
 
     let app = axum::Router::new()
@@ -30,9 +43,9 @@ pub(crate) async fn run_webserver(datastore: DataStoreLocked, websocket_ch_recv:
         .route("/lib/datarace.dash.js", get(js_lib_datarace_dashboard))
         .with_state(datastore)
         .layer(layer);
-    let listener = TcpListener::bind("0.0.0.0:3000").await?;
+    let listener = TcpListener::bind(addr.as_str()).await?;
 
-    info!("Webserver Launched");
+    info!("Webserver Launched on {}", addr);
     axum::serve(listener, app)
         .with_graceful_shutdown(async move { 
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
@@ -56,25 +69,11 @@ async fn serve_page(asset: &str) -> maud::Markup {
 /// Retrieves the folder containing the dashboards
 async fn get_dashboard_folder(datastore: DataStoreLocked) -> Result<PathBuf, FsResourceError> {
     let ds_r = datastore.read().await;
-    let folder = ds_r.get_config().get_dashboards_folder();
-    // We keep lock over datarace to prevent a race condition with folder creation
-
-    if !folder.exists() {
-        // Creating folder
-        info!("Dashboards folder did not exist, creating...");
-        if let Err(e) = std::fs::create_dir_all(folder.as_path()) {
-            error!("Failed to create Dashboards Folder: {}", e.to_string());
-            return Err(FsResourceError::from(e));
-        }
-    }
-
+    let folder = ds_r.get_config().dashboards_location.clone();
     drop(ds_r);
 
-    if folder.is_file() {
-        // We are screwed
-        error!("Unable to open dashboards folder because it is a file!");
-        return Err(FsResourceError::Custom("dashboards folder is a file".to_string()));
-    }
+    // Due to the config read this folder should exist, if it doesn't the next operation on it will
+    // fail telling on that
 
     Ok(folder)
 }
@@ -108,6 +107,7 @@ async fn read_dashboard_from_path(folder: PathBuf) -> Result<Dashboard, FsResour
 
 pub(crate) enum FsResourceError {
     DoesNotExist,
+    #[allow(dead_code)]
     Custom(String),
     FSError(std::io::Error),
     SerdeParseError(serde_json::Error)

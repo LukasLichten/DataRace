@@ -1,8 +1,7 @@
-use std::{collections::{hash_map, HashMap}, path::PathBuf, str::FromStr, sync::atomic::AtomicU64};
+use std::{collections::{hash_map, HashMap}, path::PathBuf, sync::atomic::AtomicU64};
 
 use log::info;
 use rand::Rng;
-use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use kanal::{AsyncSender, Sender};
 
@@ -12,6 +11,8 @@ use crate::{events::EventMessage, pluginloader::LoaderMessage, utils::{self, Plu
 
 /// This is our centralized State
 pub(crate) struct DataStore {
+    errors: bool,
+
     plugins: HashMap<u64, Plugin>,
     // Serves for access by the websocket
     properties: HashMap<PropertyHandle, ValueContainer>,
@@ -33,15 +34,16 @@ pub(crate) struct DataStore {
 }
 
 impl DataStore {
-    pub fn new(event_channel: kanal::Sender<EventMessage>, websocket_channel: kanal::AsyncSender<SocketChMsg>) -> RwLock<DataStore> {
+    pub fn new(event_channel: kanal::Sender<EventMessage>, websocket_channel: kanal::AsyncSender<SocketChMsg>, config: Config, errors: bool) -> RwLock<DataStore> {
         let mut ran = rand::rng();
         let secret: [u64;4] = ran.random();
 
         RwLock::new(DataStore {
+            errors,
             plugins: HashMap::default(),
             properties: HashMap::default(),
             prop_names: HashMap::default(),
-            config: Config::default(),
+            config,
             // task_map: HashMap::default(),
             shutdown: false,
             next_action_id: AtomicU64::new(0),
@@ -244,6 +246,30 @@ impl DataStore {
             self.send_message_to_plugin(id, LoaderMessage::OtherPluginStartup(*other_id)).await;
         }
     }
+
+    /// Returns if any internal errors occured
+    ///
+    /// This is currently mainly config errors or other severe behavior alteration (excluding plugins)
+    pub(crate) fn has_errors(&self) -> bool {
+        self.errors
+    }
+
+
+    /// Sets that an error has occured
+    ///
+    /// This is only for configuration errors or failed services (not for plugins and random bad web requests)
+    pub(crate) fn set_errors(&mut self) {
+        self.errors = true;
+    }
+}
+
+#[macro_export]
+macro_rules! set_errors {
+    ($ds:ident) => {
+        let mut ds_w = $ds.write().await;
+        ds_w.set_errors();
+        drop(ds_w);
+    };
 }
 
 pub(crate) struct Plugin {
@@ -255,37 +281,12 @@ pub(crate) struct Plugin {
 unsafe impl Send for Plugin {}
 unsafe impl Sync for Plugin {}
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Config {
-    plugin_location: PathBuf,
-    dashboards_location: PathBuf
-}
+    pub(crate) disable_web_server: bool,
+    pub(crate) web_server_ip: String,
+    pub(crate) web_server_port: u16,
 
-impl Default for Config {
-    fn default() -> Self {
-        let base = PathBuf::from_str(".").expect("Current folder dereference should always work");
-        Config {
-            plugin_location: {
-                let mut plugin = base.clone();
-                plugin.push("plugins");
-                plugin
-            },
-            dashboards_location: {
-                let mut dash = base.clone();
-                dash.push("dashboards");
-                dash
-            },
-        }
-    }
-}
-
-impl Config {
-    pub(crate) fn get_plugin_folder(&self) -> PathBuf {
-        self.plugin_location.clone()
-    }
-
-
-    pub(crate) fn get_dashboards_folder(&self) -> PathBuf {
-        self.dashboards_location.clone()
-    }
+    pub(crate) plugin_locations: Vec<PathBuf>,
+    pub(crate) dashboards_location: PathBuf
 }

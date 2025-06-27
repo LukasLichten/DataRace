@@ -6,5 +6,5 @@ output.txt
 bin/
 libdatarace_plugin_api.h
 
-dashboards/
-plugin/
+Dashboards/
+Plugins/

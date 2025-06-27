@@ -4,6 +4,7 @@ body {
   --theme-selection: purple;
   --theme-text-main: black;
   --theme-text-alt: white;
+  --theme-text-warning: red;
   margin: 0px;
 }
 
@@ -203,6 +204,10 @@ nav {
   text-decoration: underline;
   /* font-style: italic; */
   background: var(--theme-selection);
+}
+
+.urgent {
+  color: var(--theme-text-warning)
 }
 
 @media (max-width: 1100px)

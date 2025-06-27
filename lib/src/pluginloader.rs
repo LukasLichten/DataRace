@@ -1,48 +1,112 @@
-use std::{collections::HashMap, fs, mem::ManuallyDrop, path::PathBuf};
+use std::{collections::HashMap, fs::{self, ReadDir}, mem::ManuallyDrop, path::PathBuf};
 
 use dlopen2::wrapper::{WrapperApi, Container};
 use log::{error, info, debug};
 
 use tokio::task::JoinSet;
 
-use crate::{api_types, datastore::DataStore, events::EventMessage, utils::{self, VoidPtrWrapper}, Action, DataStoreReturnCode, EventHandle, Message, MessagePtr, MessageType, MessageValue, PluginHandle, PropertyHandle};
+use crate::{api_types, datastore::DataStore, events::EventMessage, set_errors, utils::{self, VoidPtrWrapper}, Action, DataStoreReturnCode, EventHandle, Message, MessagePtr, MessageType, MessageValue, PluginHandle, PropertyHandle};
 
 
+struct PluginLocationIter {
+    config_locations: Vec<PathBuf>,
+    index: usize,
+    directory: Option<ReadDir>,
+}
 
-pub(crate) async fn load_all_plugins(datastore: &'static tokio::sync::RwLock<DataStore>) -> Result<JoinSet<Result<(),String>>,Box<dyn std::error::Error>> {
-    let (plugin_folder, event_channel) = {
-        let ds_r = datastore.read().await;
-        (ds_r.get_config().get_plugin_folder(), ds_r.get_event_channel().clone())
-    };
+impl Iterator for PluginLocationIter {
+    type Item = Result<PathBuf, String>;
 
-    if !plugin_folder.is_dir() {
-        info!("Plugins folder did not exist, creating...");
-        if let Err(e) = fs::create_dir(plugin_folder.as_path()) {
-            error!("Unable to create plugins folder! Exiting...");
-            // TODO turn this into message into the error returned
-            return Err(Box::new(e));
-        }
-    }
+    fn next(&mut self) -> Option<Self::Item> {
+        fn validate_path(path: PathBuf) -> Option<PathBuf> {
+            debug!("Found in Plugin location: {}", path.to_str().unwrap_or_default());
+            if !path.is_file() {
+                return None;
+            }
 
-    let ending = if cfg!(target_os = "linux") {
-        "so"
-    } else {
-        "dll"
-    };
+            let ending = if cfg!(target_os = "linux") {
+                "so"
+            } else {
+                "dll"
+            };
 
-    let mut plugin_task_handles = JoinSet::<Result<(), String>>::new();
-
-
-    if let Ok(mut res) = fs::read_dir(plugin_folder) {
-        while let Some(Ok(item)) = res.next() {
-            debug!("Found {} in plugin folder", item.path().to_str().unwrap());
-            if item.path().extension().unwrap().to_str().unwrap() == ending {
-                let event_c = event_channel.clone();
-                plugin_task_handles.spawn(run_plugin(item.path(), datastore, event_c));
+            if path.extension().unwrap_or_default().to_str().unwrap_or_default() == ending {
+                Some(path)
+            } else {
+                None
             }
         }
 
+        if let Some(dir) = &mut self.directory {
+            // Folders are iterated till empty
+            match dir.next() {
+                Some(Ok(entry)) => {
+                    if let Some(p) = validate_path(entry.path()) {
+                        Some(Ok(p))
+                    } else {
+                        self.next()
+                    }
+                },
+                Some(Err(e)) => Some(Err(e.to_string())),
+                None => {
+                    self.directory = None;
+                    self.next()
+                }
+            }
+        } else {
+            // Handling Location Entries
+
+            let item = self.config_locations.get(self.index)?;
+            self.index += 1;
+            if item.is_file() {
+                if let Some(p) = validate_path(item.clone()) {
+                    Some(Ok(p))
+                } else {
+                    self.next()
+                }
+            } else if item.is_dir() {
+                debug!("Found Plugin Folder {}", item.to_str().unwrap_or_default());
+                match fs::read_dir(item.as_path()) {
+                    Ok(dir) => {
+                        self.directory = Some(dir);
+                        self.next()
+                    },
+                    Err(e) => Some(Err(format!("Unable to read folder {e}")))
+                }
+            } else {
+                Some(Err(format!("{} Does Not Exist!", item.to_str().unwrap_or_default())))
+            }
+            
+            
+        }
     }
+}
+
+
+pub(crate) async fn load_all_plugins(datastore: &'static tokio::sync::RwLock<DataStore>) -> Result<JoinSet<Result<(),String>>,Box<dyn std::error::Error>> {
+    let (plugin_locations, event_channel) = {
+        let ds_r = datastore.read().await;
+        (ds_r.get_config().plugin_locations.clone(), ds_r.get_event_channel().clone())
+    };
+
+    let mut iter = PluginLocationIter { config_locations: plugin_locations, index: 0, directory: None };
+
+    let mut plugin_task_handles = JoinSet::<Result<(), String>>::new();
+
+    while let Some(item) = iter.next() {
+        match item {
+            Ok(plugin) => {
+                debug!("Loading Plugin...");
+                let event_c = event_channel.clone();
+                plugin_task_handles.spawn(run_plugin(plugin, datastore, event_c));
+            },
+            Err(e) => {
+                error!("Unable to load: {e}");
+                set_errors!(datastore);
+            }
+        }
+    }
+
 
  
     Ok(plugin_task_handles)
@@ -247,6 +311,7 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
 
         Ok(())
     } else {
+        set_errors!(datastore);
         error!("Unable to load {} as a plugin (file could be damaged or missing necessary functions)", path.to_str().unwrap_or_default());
         Err(path.to_str().unwrap_or_default().to_string())
     }

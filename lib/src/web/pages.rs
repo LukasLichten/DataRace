@@ -74,9 +74,9 @@ async fn generate_page(content: Markup, item: usize) -> Markup {
 }
 
 pub(super) async fn index(State(datastore): State<DataStoreLocked>) -> Markup {
-    let (plugin_count,properties_count) = {
+    let (plugin_count,properties_count, error) = {
         let ds_r = datastore.read().await;
-        (ds_r.count_plugins(),ds_r.count_properties())
+        (ds_r.count_plugins(),ds_r.count_properties(), ds_r.has_errors())
     };
 
     use crate::built_info::*;
@@ -93,7 +93,7 @@ pub(super) async fn index(State(datastore): State<DataStoreLocked>) -> Markup {
             br;
             "Api Version: " (crate::API_VERSION)
             br;
-            "Enviroment: " (CFG_OS) " - " (CFG_ENV)
+            "Enviroment: " (CFG_OS) " - " (CFG_ENV) " - " (PROFILE)
             br;
             br;
             "Plugins Loaded: " (plugin_count)
@@ -104,6 +104,11 @@ pub(super) async fn index(State(datastore): State<DataStoreLocked>) -> Markup {
             a href=(PKG_REPOSITORY) { "GitHub" }
             br;
             (PKG_LICENSE)
+            
+        }
+        @if error {
+            h3 class="urgent" { "Some Error(s) have occured, please check the logs" }
+            
         }
     };
     generate_page(cont, 0).await
