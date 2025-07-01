@@ -5,7 +5,7 @@ use clap::Parser;
 
 use serde::{Deserialize, Serialize};
 
-use crate::Config;
+use crate::{web::IpMatcher, Config};
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -90,7 +90,13 @@ pub(crate) fn default_master_config() {
     let config = MasterConfig { 
         disable_web_server: false, 
         disable_user_plugin_locations: false, 
-        plugin_locations: DEFAULT_MASTER_PLUGIN_LOCATIONS.iter().map(|s| PathString(s.to_string())).collect()
+
+        web_ip_whitelist: Vec::<String>::new(),
+        web_force_ip_whitelist: false,
+        web_settings_ip_whitelist: default_settings_ip_whitelist(),
+        web_force_settings_ip_whitelist: false,
+
+        plugin_locations: DEFAULT_MASTER_PLUGIN_LOCATIONS.iter().map(|s| PathString(s.to_string())).collect(),
     };
 
     let output = match toml::to_string_pretty(&config) {
@@ -168,6 +174,20 @@ struct MasterConfig {
     #[serde(default)]
     disable_web_server: bool,
 
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default = "Vec::new")]
+    web_ip_whitelist: Vec<String>,
+
+    #[serde(default)]
+    web_force_ip_whitelist: bool,
+
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default = "Vec::new")]
+    web_settings_ip_whitelist: Vec<String>,
+
+    #[serde(default)]
+    web_force_settings_ip_whitelist: bool,
+
     /// When true means only plugin_locations defined in this config will be loaded
     #[serde(default)]
     disable_user_plugin_locations: bool,
@@ -185,6 +205,9 @@ fn serde_default_server_ip() -> String {
 fn serde_default_server_port() -> u16 {
     crate::web::DEFAULT_PORT
 }
+fn default_settings_ip_whitelist() -> Vec<String> {
+    vec!["localhost".to_string()]
+}
 
 /// Is the format of the Config.toml
 #[derive(Debug, Serialize, Deserialize)]
@@ -200,6 +223,14 @@ pub(crate) struct UserConfig {
 
     #[serde(skip_serializing_if = "Vec::is_empty")]
     #[serde(default = "Vec::new")]
+    web_ip_whitelist: Vec<String>,
+
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default = "default_settings_ip_whitelist")]
+    web_settings_ip_whitelist: Vec<String>,
+
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default = "Vec::new")]
     plugin_locations: Vec<PathString>,
 
     dashboards_location: PathString
@@ -212,6 +243,8 @@ impl Default for UserConfig {
             disable_web_server: false,
             web_server_ip: serde_default_server_ip(),
             web_server_port: crate::web::DEFAULT_PORT,
+            web_ip_whitelist: Vec::new(),
+            web_settings_ip_whitelist: default_settings_ip_whitelist(),
 
             plugin_locations: DEFAULT_USER_PLUGIN_LOCATIONS.iter().map(|s| PathString(s.to_string())).collect(),
             dashboards_location: PathString(DEFAULT_DASHBOARD_PATH.to_string())
@@ -340,10 +373,14 @@ pub(crate) fn read_config(init_conf: InitConfig) -> Option<(Config, bool)> {
         }
     };
 
+    let disable_web_server = master.disable_web_server || user.disable_web_server;
+
     let config = Config {
-        disable_web_server: master.disable_web_server || user.disable_web_server,
+        disable_web_server,
         web_server_ip: user.web_server_ip,
         web_server_port: user.web_server_port,
+        web_ip_whitelist: create_ip_matcher(disable_web_server, user.web_ip_whitelist, master.web_ip_whitelist, master.web_force_ip_whitelist)?,
+        web_settings_whitelist: create_ip_matcher(disable_web_server, user.web_settings_ip_whitelist, master.web_settings_ip_whitelist, master.web_force_settings_ip_whitelist)?,
 
         plugin_locations: {
             let mut list = master.plugin_locations;
@@ -381,10 +418,46 @@ pub(crate) fn read_config(init_conf: InitConfig) -> Option<(Config, bool)> {
         }
     };
 
-
     
         
     Some((config, errors))
+}
+
+/// Stuffs the boiler plate for error handling and ignoring the list when the sevrer is disabled
+///
+/// The double Option needs the other escaped as error handling, the inner is part of the type
+fn create_ip_matcher(disable_web_server: bool, mut ip_list: Vec<String>, mut master_ip_list: Vec<String>, force_master_config: bool) -> Option<Option<IpMatcher>> {
+    if !disable_web_server {
+        if force_master_config {
+            if !ip_list.is_empty() {
+                warn!("MasterConfig has forced it's ip whitelist, user config will be ignored");
+            }
+            if master_ip_list.is_empty() {
+                error!("MasterConfig has forced it's ip whitelist, but it is empty.");
+                return None;
+            }
+
+            match IpMatcher::new(master_ip_list) {
+                Ok(m) => Some(m),
+                Err(e) => {
+                    error!("Failed to parse ip Whitelist: {}", e);
+                    None
+                }
+            }
+        } else {
+            ip_list.append(&mut master_ip_list);
+
+            match IpMatcher::new(ip_list) {
+                Ok(m) => Some(m),
+                Err(e) => {
+                    error!("Failed to parse ip Whitelist: {}", e);
+                    None
+                }
+            }
+        }
+    } else {
+        Some(None)
+    }
 }
 
 fn create_dashboard_folder(path : PathString, errors: &mut bool) -> Option<PathBuf> {

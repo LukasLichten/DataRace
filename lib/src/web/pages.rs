@@ -1,15 +1,16 @@
 use std::str::FromStr;
 
 use axum::{extract::{Path, State}, response::{IntoResponse, Response}};
+use axum_client_ip::ClientIp;
 use datarace_socket_spec::dashboard::{DashElement, Dashboard, Property};
 use log::error;
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 use tokio::fs::{self, DirEntry};
 
-use crate::utils::ValueCache;
+use crate::{utils::ValueCache, web::dashboard::DashboardType};
 use datarace_socket_spec::socket::Value;
 
-use super::{dashboard::WebDashboard, utils::DataStoreLocked, FsResourceError};
+use super::{dashboard::WebDashboard, utils::{DataStoreLocked, IpMatchPerformer}, FsResourceError};
 
 
 #[allow(dead_code)]
@@ -228,11 +229,21 @@ pub(super) async fn properties(State(datastore): State<DataStoreLocked>) -> Mark
     generate_page(cont, 2).await
 }
 
-pub(super) async fn settings() -> Markup {
-    let cont = html! {
-        h1 style="font-style: italic;" { "Todo..." }
-    };
-    generate_page(cont, 3).await
+pub(super) async fn settings(ClientIp(ip): ClientIp, State(datastore): State<DataStoreLocked>) -> Markup {
+    let ds_r = datastore.read().await;
+    let whitelisted = ds_r.get_config().web_settings_whitelist.perform(&ip);
+
+    if whitelisted {
+        let cont = html! {
+            h1 style="font-style: italic;" { "Todo... " }
+        };
+        generate_page(cont, 3).await
+    } else {
+        let cont = html! {
+            h1 { "Access Denied" }
+        };
+        generate_page(cont, 3).await
+    }
 }
 
 pub(super) async fn load_dashboard(Path(path): Path<String>, State(datastore): State<DataStoreLocked>) -> Response {
@@ -243,7 +254,7 @@ pub(super) async fn load_dashboard(Path(path): Path<String>, State(datastore): S
             drop(ds_r);
 
             html!{ 
-                (dash.generate_dashboard(secret)) 
+                (dash.generate_dashboard(secret, DashboardType::Dash)) 
             }.into_response()
         },
         Err(e) => e.into_response(path)

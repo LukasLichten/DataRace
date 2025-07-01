@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, net::IpAddr};
 
+use axum::RequestPartsExt;
 use tokio::time::Duration;
 use log::{debug, error, trace};
 use serde::{Deserialize, Serialize};
@@ -36,7 +37,9 @@ async fn on_connect(socket: SocketRef) {
         }
     }
 
-    debug!("Someone is trying to connect, {}", socket.id);
+    let ip = extract_ip(&socket).await;
+
+    debug!("Someone is trying to connect to the socket, {}:{}", ip.map(|i| i.to_string()).unwrap_or_default(), socket.id);
 
     // For some reason I can't serialize the Plugin version through Serializer,
     // the function just isn't called
@@ -98,6 +101,21 @@ async fn on_connect(socket: SocketRef) {
     });
     
     error_log(socket.emit("require_auth", &()));
+}
+
+async fn extract_ip(socket: &SocketRef) -> Option<IpAddr> {
+    let res = socket.req_parts().clone().extract::<axum_client_ip::ClientIp>().await;
+
+    match res {
+        Ok(axum_client_ip::ClientIp(ip)) => {
+            trace!("Socket IP: {ip}");
+            Some(ip)
+        },
+        Err(e) => {
+            trace!("Failed to extract ip: {e}");
+            None
+        }
+    }
 }
 
 const UPDATE_RATE: Duration = Duration::from_millis(10);

@@ -1,13 +1,15 @@
-use std::{path::PathBuf, sync::{atomic::AtomicBool, Arc}};
+use std::{net::SocketAddr, path::PathBuf, sync::{atomic::AtomicBool, Arc}};
 
-use axum::{http::StatusCode, response::{IntoResponse, Response}, routing::get};
+use axum::{extract::{Request, State}, http::StatusCode, middleware::Next, response::{IntoResponse, Response}, routing::get};
+use axum_client_ip::{ClientIp, ClientIpSource};
 use datarace_socket_spec::dashboard::Dashboard;
-use log::{debug, info};
+use log::{debug, info, warn};
 use tokio::{fs, net::TcpListener};
+use tower::ServiceBuilder;
 
-use utils::DataStoreLocked;
+use utils::{DataStoreLocked, IpMatchPerformer};
 
-pub(crate) use utils::{SocketChMsg, WebSocketChReceiver, create_websocket_channel};
+pub(crate) use utils::{SocketChMsg, WebSocketChReceiver, create_websocket_channel, IpMatcher};
 
 mod utils;
 mod socket;
@@ -28,8 +30,13 @@ pub(crate) async fn run_webserver(datastore: DataStoreLocked, websocket_ch_recv:
     }
     let addr = format!("{}:{}", config.web_server_ip, config.web_server_port);
 
+    // This may need to be configurable when put behind a reverse proxy, but for most usecases this is fine
+    let ip_source = ClientIpSource::ConnectInfo;
+    let ip_matcher: Option<IpMatcher> = config.web_ip_whitelist;
+
     debug!("Setting up webserver ({})...", addr.as_str());
-    let layer = socket::create_socketio_layer(datastore, websocket_ch_recv).await;
+
+    let socket_layer = socket::create_socketio_layer(datastore, websocket_ch_recv).await;
 
     let app = axum::Router::new()
         .route("/", get(pages::index))
@@ -42,11 +49,15 @@ pub(crate) async fn run_webserver(datastore: DataStoreLocked, websocket_ch_recv:
         .route("/lib/socket.io.js", get(js_lib_socket_io))
         .route("/lib/datarace.dash.js", get(js_lib_datarace_dashboard))
         .with_state(datastore)
-        .layer(layer);
+        .layer(ServiceBuilder::new()
+            .layer(ip_source.into_extension())
+            .layer(axum::middleware::from_fn_with_state(ip_matcher, ip_filtering_middleware))
+            .layer(socket_layer)
+        );
     let listener = TcpListener::bind(addr.as_str()).await?;
 
     info!("Webserver Launched on {}", addr);
-    axum::serve(listener, app)
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(async move { 
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -63,6 +74,15 @@ pub(crate) async fn run_webserver(datastore: DataStoreLocked, websocket_ch_recv:
 async fn serve_page(asset: &str) -> maud::Markup {
     maud::html! {
         (pages::serve_asset(asset).await)
+    }
+}
+
+async fn ip_filtering_middleware(State(ip_matcher): State<Option<IpMatcher>>, ClientIp(ip): ClientIp,  request: Request, next: Next) -> Response {
+    if ip_matcher.perform(&ip) {
+        next.run(request).await
+    } else {
+        warn!("Web server blocked request of client '{ip}': Not on the Whitelist");
+        FsResourceError::AccessDenied.into_response(request.uri().to_string())
     }
 }
 
@@ -106,6 +126,7 @@ async fn read_dashboard_from_path(folder: PathBuf) -> Result<Dashboard, FsResour
 }
 
 pub(crate) enum FsResourceError {
+    AccessDenied,
     DoesNotExist,
     #[allow(dead_code)]
     Custom(String),
@@ -138,7 +159,8 @@ impl FsResourceError {
             Self::DoesNotExist => StatusCode::NOT_FOUND,
             Self::Custom(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::FSError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::SerdeParseError(_) => StatusCode::INTERNAL_SERVER_ERROR
+            Self::SerdeParseError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::AccessDenied => StatusCode::FORBIDDEN,
         };
 
         res
@@ -151,6 +173,7 @@ impl FsResourceError {
                 None => String::new()
             },
             match self {
+                Self::AccessDenied => "You are not permitted to access this resource".to_string(),
                 Self::DoesNotExist => "Does Not Exist".to_string(),
                 Self::Custom(text) => text.clone(),
                 Self::FSError(e) => format!("Failed to open file: {}", e.to_string()),

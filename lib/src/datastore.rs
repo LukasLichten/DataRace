@@ -7,7 +7,7 @@ use kanal::{AsyncSender, Sender};
 
 use datarace_socket_spec::socket::Action as WebAction;
 
-use crate::{events::EventMessage, pluginloader::LoaderMessage, utils::{self, PluginStatus, ValueContainer, U256}, web::SocketChMsg, Action, DataStoreReturnCode, PluginHandle, PropertyHandle};
+use crate::{events::EventMessage, pluginloader::LoaderMessage, utils::{self, PluginStatus, ValueContainer, U256}, web::{IpMatcher, SocketChMsg}, Action, DataStoreReturnCode, PluginHandle, PropertyHandle};
 
 /// This is our centralized State
 pub(crate) struct DataStore {
@@ -286,6 +286,8 @@ pub(crate) struct Config {
     pub(crate) disable_web_server: bool,
     pub(crate) web_server_ip: String,
     pub(crate) web_server_port: u16,
+    pub(crate) web_ip_whitelist: Option<IpMatcher>,
+    pub(crate) web_settings_whitelist: Option<IpMatcher>,
 
     pub(crate) plugin_locations: Vec<PathBuf>,
     pub(crate) dashboards_location: PathBuf

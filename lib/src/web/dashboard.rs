@@ -7,7 +7,7 @@ use datarace_socket_spec::{dashboard::{Action, DashElement, DashElementType, Das
 use crate::{utils::U256, PropertyHandle};
 
 pub(crate) trait WebDashboard {
-    fn generate_dashboard(&self, secret: U256) -> Markup;
+    fn generate_dashboard(&self, secret: U256, ty: DashboardType) -> Markup;
     fn generate_token(&self, secret: U256) -> U256;
 }
 
@@ -17,14 +17,20 @@ fn dashboard_header(name: &String) -> Markup {
         meta charset="utf-8";
         title { "DataRace - " (name) }
     }
-} 
+}
+
+pub enum DashboardType {
+    Dash,
+    #[allow(dead_code)]
+    Settings,
+}
 
 impl WebDashboard for Dashboard {
     fn generate_token(&self, secret: U256) -> U256 {
         U256(crate::utils::generate_dashboard_hash(self, secret.0))
     }
 
-    fn generate_dashboard(&self, secret: U256) -> Markup {
+    fn generate_dashboard(&self, secret: U256, ty: DashboardType) -> Markup {
         let mut names = vec![];
         for e in &self.elements {
             names = match e.gather_names(names) {
@@ -214,7 +220,13 @@ impl WebDashboard for Dashboard {
 
                 "SOCKET.on('require_auth', function() {"
                     "console.log('Server requested auth');"
-                    (PreEscaped(format!("SOCKET.emit('auth_dashboard', {});", auth)))
+                    @match ty {
+                        DashboardType::Dash => (PreEscaped(format!("SOCKET.emit('auth_dashboard', {});", auth))),
+                        DashboardType::Settings => ({
+                            error!("Settings dashboards are not implemented yet");
+                            "console.log('Failed to auth: Unimplemented');"
+                        }),
+                    }
                     "DISCO.style.display = 'none';"
                 "});"
 

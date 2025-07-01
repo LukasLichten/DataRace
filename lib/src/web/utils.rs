@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, net::{IpAddr, Ipv4Addr, Ipv6Addr}, sync::Arc};
 
 use hex::FromHex;
 use kanal::{AsyncReceiver, AsyncSender};
@@ -165,4 +165,149 @@ impl TryFrom<WebActionHandle> for ActionHandle {
         let (plugin, action) = value.get_hashes().ok_or("Malformed ActionHandle")?;
         Ok(ActionHandle { plugin, action })
     }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct IpMatcher {
+    /// Ip address and mask, mask == 0 is just equals
+    ipv4_rules: Vec<(Ipv4Addr, u32)>,
+
+    /// Ip address and mask, mask == 0 is just equals
+    ipv6_rules: Vec<(Ipv6Addr, u32)>,
+}
+
+impl IpMatcher {
+    pub(crate) fn new(rules: Vec<String>) -> Result<Option<IpMatcher>, String> {
+        let mut res = Self { ipv4_rules: Vec::new(), ipv6_rules: Vec::new() };
+
+        for item in rules {
+
+            let (ip_str, mask) = match item.split_once('/') {
+                Some((ip, mask)) => {
+                    let mask = mask.parse::<u32>().map_err(|e| format!("'{}' {e}", item.as_str()))?;
+                    (ip,mask)
+                },
+                None => {
+                    (item.as_str(), u32::MAX)
+                }
+            };
+
+            match ip_str.parse::<IpAddr>() {
+                Ok(ip) => {
+                    match ip {
+                        IpAddr::V4(v4) => {
+                            let value = (v4, if mask == u32::MAX { 32 } else { mask });
+
+                            if value.1 > 32 {
+                                return Err(format!("'{}' a subnet mask of {mask} is invalid, range of 0 to 32 (both inclusive)", item.as_str()));
+                            }
+
+                            if !res.ipv4_rules.contains(&value) {
+                                res.ipv4_rules.push(value);
+                            }
+                        },
+                        IpAddr::V6(v6) => {
+                            let value = (v6, if mask == u32::MAX { 128 } else { mask });
+
+                            if value.1 > 128 {
+                                return Err(format!("'{}' a subnet mask of {mask} is invalid, range of 0 to 128 (both inclusive)", item.as_str()));
+                            }
+
+                            if !res.ipv6_rules.contains(&value) {
+                                res.ipv6_rules.push(value)
+                            }
+                        }
+                    }
+                },
+                Err(e) => {
+                    if item.eq_ignore_ascii_case("localhost") {
+                        if !res.ipv4_rules.contains(&(Ipv4Addr::LOCALHOST,32)) {
+                            res.ipv4_rules.push((Ipv4Addr::LOCALHOST, 32));
+                        }
+                        if !res.ipv6_rules.contains(&(Ipv6Addr::LOCALHOST,128)) {
+                            res.ipv6_rules.push((Ipv6Addr::LOCALHOST, 128));
+                        }
+                    } else {
+                        return Err(format!("'{}' {e}", item.as_str()));
+                    }
+                }
+            };
+        }
+
+        if res.ipv4_rules.is_empty() && res.ipv6_rules.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(res))
+        }
+    }
+}
+
+impl IpMatchPerformer<IpAddr> for Option<IpMatcher> {
+    fn perform(&self, value: &IpAddr) -> bool {
+        match self {
+            Some(s) => s.perform(value),
+            None => true
+        }
+    }
+}
+
+impl IpMatchPerformer<IpAddr> for IpMatcher {
+    fn perform(&self, value: &IpAddr) -> bool {
+        match value {
+            IpAddr::V4(v4) => self.perform(v4),
+            IpAddr::V6(v6) => self.perform(v6),
+        }
+    }
+}
+
+impl IpMatchPerformer<Ipv4Addr> for IpMatcher {
+    fn perform(&self, value: &Ipv4Addr) -> bool {
+        for (ip, mask) in self.ipv4_rules.iter() {
+            // Straight match
+            if mask == &32 {
+                if value == ip {
+                    return true;
+                }
+            } else {
+                // Masked match
+                
+                let value = value.clone().to_bits().unbounded_shr(*mask);
+                let ip = ip.clone().to_bits().unbounded_shr(*mask);
+
+                if value == ip {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+}
+
+impl IpMatchPerformer<Ipv6Addr> for IpMatcher {
+    fn perform(&self, value: &Ipv6Addr) -> bool {
+        for (ip, mask) in self.ipv6_rules.iter() {
+            // Straight match
+            if mask == &128 {
+                if value == ip {
+                    return true;
+                }
+            } else {
+                // Masked match
+                
+                let value = value.clone().to_bits().unbounded_shr(*mask);
+                let ip = ip.clone().to_bits().unbounded_shr(*mask);
+
+                if value == ip {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+}
+
+pub(crate) trait IpMatchPerformer<T> {
+    fn perform(&self, value: &T) -> bool;
 }
