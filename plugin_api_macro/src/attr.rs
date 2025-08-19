@@ -42,7 +42,36 @@ fn is_plugin_handle(arg: Option<&FnArg>, signatur: &Signature) -> Result<Ident, 
 
     
     Err(quote_spanned! {
-        signatur.inputs.span() => compile_error!("function requiers PluginHandle as argument")
+        signatur.inputs.span() => compile_error!("function requiers PluginHandle as 1st argument")
+    }.into_token_stream().into())
+}
+
+fn is_load_state(arg: Option<&FnArg>, signatur: &Signature) -> Result<bool, TokenStream> {
+    if let Some(FnArg::Typed(handle)) = arg {
+        if let Type::Path(res) = *handle.ty.clone() {
+            for item in res.path.segments.iter() {
+                if item.ident == "reexport" || item.ident == "datarace_plugin_api_sys" {
+                    return Err(quote_spanned! {
+                        res.path.span() => compile_error!("please use datarace_plugin_api::wrappers::PluginSettingsLoadState as the argument type.\nDo Not use this macro if you intend a raw implementation.")
+                    }.into_token_stream().into());
+                }    
+            }
+
+            if let Some(seg) = res.path.segments.iter().last() {
+                if seg.ident == "PluginSettingsLoadState" && seg.arguments.is_none() {
+                    // if let syn::Pat::Ident(name) = &*handle.pat {
+                        return Ok(true)
+                    // }
+                }
+            }
+        }
+    } else {
+        return Ok(false);
+    }
+
+    
+    Err(quote_spanned! {
+        signatur.inputs.span() => compile_error!("optional 2nd argument for the function can only be of type PluginSettingsLoadState")
     }.into_token_stream().into())
 }
 
@@ -77,12 +106,6 @@ pub(crate) fn plugin_init(_attr: TokenStream, item: TokenStream) -> TokenStream 
 
     let func_name = sig.ident.clone();
 
-    // Checking function signatures for weird modifiers, and generating call
-    let func_call = match is_sig_valid(&sig) {
-        Ok(true) => quote!{ unsafe { #func_name(han) } },
-        Ok(false) => quote!{ #func_name(han) },
-        Err(e) => return e
-    };
 
 
     // Processing and checking arguments for the function
@@ -91,12 +114,26 @@ pub(crate) fn plugin_init(_attr: TokenStream, item: TokenStream) -> TokenStream 
         Ok(arg_name) => arg_name,
         Err(e) => return e
     };
+
+    let use_load_state = match is_load_state(iter.next(), &sig) {
+        Ok(res) => res,
+        Err(e) => return e,
+    };
     
     if let Some(res) = iter.next() {
         return quote_spanned! {
-            res.span() => compile_error!("only a single parameter permited")
+            res.span() => compile_error!("A minimum of 1 and maximum of 2 function arguments permited")
         }.into_token_stream().into();
     }
+
+    // Checking function signatures for weird modifiers, and generating call
+    let func_call = match (is_sig_valid(&sig), use_load_state) {
+        (Ok(false),true) => quote! { #func_name(han, ls) },
+        (Ok(false),false) => quote! { #func_name(han) },
+        (Ok(true),true) => quote! { unsafe { #func_name(han, ls) } },
+        (Ok(true),false) => quote! { unsafe { #func_name(han) } },
+        (Err(e), _) => return e
+    };
 
 
     // Processing return type, and generating function call based on it
@@ -174,6 +211,13 @@ pub(crate) fn plugin_init(_attr: TokenStream, item: TokenStream) -> TokenStream 
         }.into_token_stream().into();
     };
 
+    let load_state_ident = match use_load_state {
+        true => quote! { ls },
+        // In case the function does not use loadstate we will still need to handle it,
+        // so this drops it upon creation
+        false => quote! { _ }
+    };
+
     // TODO validate that the plugin handle is not missused in the code block in relation to state
     // Ergo: if auto_save on, that the handle is not cloned, moved into closures etc
     // if auto_save off, that every code path to okay has a save, and that there are no
@@ -182,11 +226,12 @@ pub(crate) fn plugin_init(_attr: TokenStream, item: TokenStream) -> TokenStream 
     // Code generation
     quote! {
 #[unsafe(no_mangle)]
-pub extern "C" fn init(handle: *mut datarace_plugin_api::reexport::PluginHandle) -> std::os::raw::c_int {
+pub extern "C" fn init(handle: *mut datarace_plugin_api::reexport::PluginHandle, loadstate: datarace_plugin_api::reexport::PluginSettingsLoadReturn) -> std::os::raw::c_int {
     #(#attrs)*
     #sig #block
 
     let han = unsafe { datarace_plugin_api::wrappers::PluginHandle::new(handle) };
+    let #load_state_ident = datarace_plugin_api::wrappers::PluginSettingsLoadState::from(loadstate);
     let res = std::panic::catch_unwind(|| {
         #init_handle
     });

@@ -592,9 +592,23 @@ pub enum DataStoreReturnCode {
     TypeMissmatch = 5,
     NotImplemented = 6,
     ParameterCorrupted = 10,
-    DataCorrupted = 11,
-    Unknown = 255
 
+    /// A general internal error, all we know something went very wrong,
+    /// and DataRace needs likely a full restart
+    InternalError = 100,
+    /// When the internal channel has been closed this indicates an unrecoverable failure,
+    /// either your update loop returned an error, or other failure within DataRace
+    InternalChannelClosed = 101,
+    /// When the internal channel receiver has been closed this indicates your pluginloader task (or
+    /// eventloop for event related calls) is no longer running, will no longer update, and you
+    /// should likely exit.
+    InternalChannelReceiverClosed = 102,
+    
+    // This error should never occure within rust, so we do not cover it
+    // HandleNullPtr = 255,
+
+    /// Unkown case, caused by new Return codes being introduced
+    Unknown = 255
 }
 
 impl DataStoreReturnCode {
@@ -623,7 +637,12 @@ impl From<sys::DataStoreReturnCode> for DataStoreReturnCode {
             sys::DataStoreReturnCode_TypeMissmatch => DataStoreReturnCode::TypeMissmatch,
             sys::DataStoreReturnCode_NotImplemented => DataStoreReturnCode::NotImplemented,
             sys::DataStoreReturnCode_ParameterCorrupted => DataStoreReturnCode::ParameterCorrupted,
-            sys::DataStoreReturnCode_DataCorrupted => DataStoreReturnCode::DataCorrupted,
+            sys::DataStoreReturnCode_InternalError => DataStoreReturnCode::InternalError,
+            sys::DataStoreReturnCode_InternalChannelClosed => DataStoreReturnCode::InternalChannelClosed,
+            sys::DataStoreReturnCode_InternalChannelReceiverClosed => DataStoreReturnCode::InternalChannelReceiverClosed,
+
+            // This error should never occure with Rust
+            sys::DataStoreReturnCode_HandleNullPtr => DataStoreReturnCode::Unknown,
             _ => DataStoreReturnCode::Unknown
         }
     }
@@ -639,8 +658,141 @@ impl Display for DataStoreReturnCode {
             DataStoreReturnCode::TypeMissmatch => "Action failed: You can only use the same type for updates as you created it with (or use change_property_type)",
             DataStoreReturnCode::NotImplemented => "Action denied: This function has to still be implemented",
             DataStoreReturnCode::ParameterCorrupted => "Action failed: Parameters are inproperly formated or otherwise incorrect",
-            DataStoreReturnCode::DataCorrupted => "Error: Unable to parse input Data. This indicates a corrupted PluginHandle or Datastore, which are non recoverable",
+
+            DataStoreReturnCode::InternalError => "Error: DataRace Internal Error, shutdown likely required",
+            DataStoreReturnCode::InternalChannelClosed => "Error: Internal Channel was closed, shutdown required",
+            DataStoreReturnCode::InternalChannelReceiverClosed => "Error: Receiver of Internal Channel was closed, shutdown required",
+
+            // DataStoreReturnCode::HandleNullPtr => "Error: PluginHandle was a nullptr (this should not be possible with this api)",
             DataStoreReturnCode::Unknown => "Action failed for an unknown reason. Plugin is too out of date to know this message, possibly the reason for the Error"
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PluginSettingsLoadState {
+    /// Settings for our plugins have been loaded successfully.
+    Loaded,
+    /// There was no Settings file for our Plugin.
+    ///
+    /// Either this is the first time this plugin is loaded, or we didn't save them on exit
+    NoFile,
+
+    /// The Settings were loaded, however they were last saved in an older version of the plugin,
+    /// so you likely want to update them.
+    ///
+    /// Once you save the settings the next load will result in Loaded
+    FromOlderVersion([u16;3]),
+    /// The Settings were loaded, however they were last saved in a newer version of the plugin,
+    /// meaning the user has rolled back the plugin. How you deal with this case is up to you.
+    ///
+    /// Once you save the settings the next load will result in Loaded
+    FromNewerVersion([u16;3]),
+
+    /// A filesystem error has occured, no settings were loaded, it is likely not possible to save
+    /// any settings either
+    FsError(String),
+    /// Json Structure is invalid (likely due to user editing of the file), no settings were
+    /// loaded.
+    ///
+    /// Saving new settings is possible, but ill-advised, as the user would loose all configuration
+    /// in the process.
+    JsonParseError(String),
+
+
+    /// Unkown case, caused by new state codes being introduced
+    Unknown
+}
+
+impl From<sys::PluginSettingsLoadState> for PluginSettingsLoadState {
+    fn from(value: sys::PluginSettingsLoadState) -> Self {
+        match value {
+            sys::PluginSettingsLoadState_Loaded => Self::Loaded,
+            sys::PluginSettingsLoadState_NoFile => Self::NoFile,
+            sys::PluginSettingsLoadState_VersionOlderThenCurrent => Self::FromOlderVersion([u16::MAX; 3]),
+            sys::PluginSettingsLoadState_VersionNewerThenCurrent => Self::FromNewerVersion([u16::MAX; 3]),
+            sys::PluginSettingsLoadState_FileSystemError => Self::FsError(String::new()),
+            sys::PluginSettingsLoadState_JsonParseError => Self::JsonParseError(String::new()),
+
+            // This one should never occure with Rust
+            sys::PluginSettingsLoadState_PslsHandleNullPtr => Self::Unknown,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+impl From<sys::PluginSettingsLoadReturn> for PluginSettingsLoadState {
+    fn from(value: sys::PluginSettingsLoadReturn) -> Self {
+        match value.code {
+            sys::PluginSettingsLoadState_Loaded => Self::Loaded,
+            sys::PluginSettingsLoadState_NoFile => Self::NoFile,
+            sys::PluginSettingsLoadState_VersionOlderThenCurrent => {
+                let version = unsafe { value.fail.version }.clone();
+                Self::FromOlderVersion(version)
+            },
+            sys::PluginSettingsLoadState_VersionNewerThenCurrent => {
+                let version = unsafe { value.fail.version }.clone();
+                Self::FromNewerVersion(version)
+            },
+            sys::PluginSettingsLoadState_FileSystemError => {
+                let ptr = unsafe {
+                    value.fail.text
+                };
+                if let Some(val) = get_string(ptr) {
+                    // I am not 100% sure we are properly disposing of the original cstring
+                    // Does to_string clone the data?
+                    // we just call clone here so we can "safely" drop the Cstring
+                    let res = Self::FsError(val.clone());
+
+                    unsafe {
+                        sys::deallocate_string(ptr);
+                    }
+                    res
+                } else {
+                    Self::Unknown
+                }
+            },
+            sys::PluginSettingsLoadState_JsonParseError => {
+                let ptr = unsafe {
+                    value.fail.text
+                };
+                if let Some(val) = get_string(ptr) {
+                    // I am not 100% sure we are properly disposing of the original cstring
+                    // Does to_string clone the data?
+                    // we just call clone here so we can "safely" drop the Cstring
+                    let res = Self::JsonParseError(val.clone());
+
+                    unsafe {
+                        sys::deallocate_string(ptr);
+                    }
+                    res
+                } else {
+                    Self::Unknown
+                }
+
+            }
+
+            sys::PluginSettingsLoadState_PslsHandleNullPtr => Self::Unknown,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+impl std::fmt::Display for PluginSettingsLoadState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let v = match self {
+            PluginSettingsLoadState::Loaded => "Successfully Loaded/Saved".to_string(),
+            PluginSettingsLoadState::NoFile => "No Settings File Found".to_string(),
+            PluginSettingsLoadState::FsError(s) => format!("Failed to load/save due to File System Error: {s}"),
+            PluginSettingsLoadState::JsonParseError(s) => format!("Failed to load/save due to Json Parsing Error: {s}"),
+            PluginSettingsLoadState::FromOlderVersion(v) => format!("Loaded Successfully, but the Settings are from an older version: {}.{}.{}", v[0], v[1], v[2]),
+            PluginSettingsLoadState::FromNewerVersion(v) => format!("Loaded Successfully, but the Settings are from a newer version: {}.{}.{}", v[0], v[1], v[2]),
+
+
+            PluginSettingsLoadState::Unknown => "Unknown Error occurred while loading Settings".to_string()
+        };
+        f.write_str({
+            v.as_str()
         })
     }
 }

@@ -173,6 +173,9 @@ async fn update(io: SocketIo, datastore: SocketDataRef, rx: WebSocketChReceiver)
     }
 }
 
+/// Returns true when further messages should be processed
+/// Mainly for Property container changes, while adding a Dashboard should not read any further
+/// messages
 async fn process_msg(
     msg: SocketChMsg,
     datastore: SocketDataRef,
@@ -255,6 +258,16 @@ async fn process_msg(
             }
 
             true
+        },
+        SocketChMsg::ChangedSettingsProperty(_handle, _container) => {
+            // TODO: Implement handling
+
+            true
+        },
+        SocketChMsg::ReloadedPluginSettings(_plugin) => {
+            // TODO: Implement handling
+            
+            false
         }
     }
 }

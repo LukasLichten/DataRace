@@ -1,5 +1,5 @@
 use std::{ffi::CString, os::raw::c_void};
-use crate::wrappers::{Action, ActionHandle, DataStoreReturnCode, EventHandle, PluginHandle, PluginLockGuard, Property, PropertyHandle};
+use crate::wrappers::{Action, ActionHandle, DataStoreReturnCode, EventHandle, PluginHandle, PluginLockGuard, PluginSettingsLoadState, Property, PropertyHandle};
 
 use datarace_plugin_api_sys as sys;
 
@@ -337,6 +337,147 @@ impl PluginHandle {
         unsafe { sys::lock_plugin(self.get_ptr()) };
 
         PluginLockGuard { handle: self }
+    }
+
+    /// This reloads the Plugin Settings from it's file.
+    /// 
+    /// Be aware that any unsaved changes will be lost, including transient Settings Properties.
+    pub fn reload_plugin_settings(&self) -> PluginSettingsLoadState {
+        let res = unsafe { sys::reload_plugin_settings(self.get_ptr()) };
+
+        PluginSettingsLoadState::from(res)
+    }
+
+    /// This saves the Plugin Settings from it's file.
+    /// 
+    /// Only none transiant properties are saved.
+    /// Once Saved (and successfull), reload will revert to this state.
+    ///
+    /// In case of a FileSystem Error it is unclear if a partial write occured, all other errors leave
+    /// the previous saved file always intact.
+    pub fn save_plugin_settings(&self) -> PluginSettingsLoadState {
+        let res = unsafe { sys::save_plugin_settings(self.get_ptr()) };
+
+        PluginSettingsLoadState::from(res)
+    }
+
+    /// This retrieves a settings property for this plugin.
+    /// Settings are distinct from standard properties, they are used for the Settings Dashboard for
+    /// your plugin, and to persist these between restarts. But their access is slow (Requiring the central DataStore to lock), 
+    /// so you are best off reading these once and caching them.
+    /// But they do use the same PropertyHandle as regular properties (without name collisions between
+    /// the two types, so you can have a property and plugin setting property named the same).
+    ///
+    /// Attempting a access a setting of another plugin will result in NotAuthenticated error.
+    /// A setting needs to be created first (through create_plugin_settings_proptery, or it was in the
+    /// settings file loaded on startup/through reload_plugin_settings).
+    pub fn get_plugin_settings_property(&self, prop_handle: PropertyHandle) -> Result<Property, DataStoreReturnCode> {
+        let res = unsafe {
+            sys::get_plugin_settings_property(self.get_ptr(), prop_handle.get_inner())
+        };
+
+        let code = DataStoreReturnCode::from(res.code);
+        if code != DataStoreReturnCode::Ok {
+            return Err(code);
+        }
+
+        Ok(Property::new(res.value))
+    }
+
+    /// This changes the value (and possibly the type) of a plugin settings property.
+    ///
+    /// Compared to the update function for normal properties you can use this function to change type
+    /// too, the only requirement is that the settings property has to exist first.
+    pub fn change_plugin_settings_property(&self, prop_handle: PropertyHandle, property: Property) -> DataStoreReturnCode {
+        let res = unsafe {
+            sys::change_plugin_settings_property(self.get_ptr(), prop_handle.get_inner(), property.to_c())
+        };
+
+        DataStoreReturnCode::from(res)
+    }
+
+    /// Creates a plugin settings property (if it doesn't exit already)
+    ///
+    /// Settings are distinct from standard properties, they are used for the Settings Dashboard for
+    /// your plugin, and to persist these between restarts. But their access is slow (Requiring the central DataStore to lock), 
+    /// so you are best off reading these once and caching them.
+    /// But they do use the same PropertyHandle as regular properties.
+    ///
+    /// Transient Settings are not persevered when the settings are saved.
+    ///
+    /// Same as create_property, the name of your plugin will be prepended to the final name: plugin_name.name
+    /// It is also your job to deallocate this name string.
+    pub fn create_plugin_settings_property<S: ToString>(
+        &self, 
+        name: S, 
+        prop_handle: PropertyHandle, 
+        property: Property, 
+        transient: bool
+    ) -> DataStoreReturnCode {
+        let ptr = create_cstring!(name);
+
+        let res = unsafe {
+            sys::create_plugin_settings_property(self.get_ptr(), prop_handle.get_inner(), ptr, property.to_c(), transient)
+        };
+
+        DataStoreReturnCode::from(res)
+    }
+
+
+    /// This deletes a plugin settings property.
+    ///
+    /// Compared to the delete_property function for normal properties, this delete is finished upon
+    /// the function returning
+    pub fn delete_plugin_settings_property(&self, prop_handle: PropertyHandle) -> DataStoreReturnCode {
+        let res = unsafe {
+            sys::delete_plugin_settings_property(self.get_ptr(), prop_handle.get_inner())
+        };
+
+        DataStoreReturnCode::from(res)
+    }
+
+    /// Checks if a Plugin Settings Property is transient (aka will not be saved in the settings file).
+    ///
+    /// If you have no access to the property (or it doesn't exist), then None is returned.
+    ///
+    /// However this is achieved by doing two requests when the first returns transience is true. 
+    /// So there exists this edge case race condition, where the property is created after checking transience, 
+    /// but before checking existence, resulting in Some(true) being falsely returned.  
+    ///
+    /// This is however very unlikely, and this risk is outweight by the benefit of having
+    /// (basically always) correct `exists == true && transient == true` responses without further
+    /// complications.
+    pub fn is_plugin_settings_property_transient(&self, prop_handle: PropertyHandle) -> Option<bool> {
+        let res = unsafe {
+            sys::is_plugin_settings_property_transient(self.get_ptr(), prop_handle.get_inner())
+        };
+
+        if res {
+            // This is a bit of a race condition
+            let prop = unsafe {
+                sys::get_plugin_settings_property(self.get_ptr(), prop_handle.get_inner())
+            };
+            
+            let code = DataStoreReturnCode::from(prop.code);
+            match code {
+                DataStoreReturnCode::Ok => Some(true),
+                _ => None
+            }
+        } else {
+            Some(false)
+        }
+    }
+
+    /// Make a plugin setting property transient (or no longer transient).
+    ///
+    /// Transient Properties will not be saved in the Settings file, so this enables you to
+    /// retroactively set a property as transient or vise versa.
+    pub fn set_plugin_settings_property_transient(&self, prop_handle: PropertyHandle, transient: bool) -> DataStoreReturnCode {
+        let res = unsafe {
+            sys::set_plugin_settings_property_transient(self.get_ptr(), prop_handle.get_inner(), transient)
+        };
+
+        DataStoreReturnCode::from(res)
     }
 }
 

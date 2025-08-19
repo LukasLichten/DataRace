@@ -102,6 +102,12 @@ impl PropertyContainer {
     }
 }
 
+// Temporary function till implementation of AtomicF64
+fn new_atomicf64(value: f64) -> AtomicU64 {
+    AtomicU64::new(u64::from_be_bytes(value.to_be_bytes()))
+}
+
+
 #[derive(Debug)]
 pub(crate) enum ValueContainer {
     None,
@@ -158,19 +164,21 @@ impl ValueContainer {
     }
 
 
-    // fn new_int(val: Value) -> ValueContainer {
-    //     match val {
-    //         Value::None => ValueContainer::None,
-    //         Value::Int(i) => ValueContainer::Int(AtomicI64::new(i)),
-    //         Value::Float(f) => ValueContainer::Float(AtomicU64::new(f)),
-    //         Value::Bool(b) => ValueContainer::Bool(AtomicBool::new(b)),
-    //         Value::Str(s) => ValueContainer::Str(Mutex::new(s)),
-    //         Value::Dur(d) => ValueContainer::Dur(AtomicI64::new(d))
-    //     }
-    //     ValueContainer::None
-    // }
+    pub(crate) fn new_web(val: Value) -> Option<ValueContainer> {
+        Some(match val {
+            Value::None => ValueContainer::None,
+            Value::Int(i) => ValueContainer::Int(Arc::new(AtomicI64::new(i))),
+            Value::Float(f) => ValueContainer::Float(Arc::new(new_atomicf64(f))),
+            Value::Bool(b) => ValueContainer::Bool(Arc::new(AtomicBool::new(b))),
+            Value::Str(s) => ValueContainer::Str(Arc::new((RwLock::new(s), AtomicUsize::new(1)))),
+            Value::Dur(d) => ValueContainer::Dur(Arc::new(AtomicI64::new(d))),
+            Value::Arr(arr) => ValueContainer::Arr(Arc::new(ArrayValueContainer::new_web(arr)?)),
+            // Array Update is not permitted for creation
+            Value::ArrUpdate(_) => return None,
+        })
+    }
 
-    fn update(&self, val: Property, plugin_handle: &PluginHandle) -> bool {
+    pub(crate) fn update(&self, val: Property, plugin_handle: &PluginHandle) -> bool {
         match (val.sort, self) {
             (PropertyType::None, ValueContainer::None) => true,
             (PropertyType::Int, ValueContainer::Int(at)) => {
@@ -290,9 +298,10 @@ impl ValueContainer {
                         // object stored is in one piece.
                         // But in reality this case should be pratically impossible, we only write
                         // a single string while holding this handle, this should never go wrong
-                        "".to_string()
+                        String::new()
                     }
                 };
+                let _ = store;
                 
                 
                 let raw = CString::new(res).expect("string is string").into_raw();
@@ -354,7 +363,7 @@ impl ValueContainer {
                         // object stored is in one piece.
                         // But in reality this case should be pratically impossible, we only write
                         // a single string while holding this handle, this should never go wrong
-                        "".to_string()
+                        String::new()
                     }
                 };
                 
@@ -387,6 +396,19 @@ impl ValueContainer {
             ValueContainer::Arr(arr) => ValueContainer::Arr(arr.clone())
         }
     }
+
+    // pub(crate) fn matching_type(&self, prop: &Property) -> bool {
+    //     match (self, &prop.sort) {
+    //         (Self::None, PropertyType::None) => true,
+    //         (Self::Int(_), PropertyType::Int) => true,
+    //         (Self::Float(_), PropertyType::Float) => true,
+    //         (Self::Bool(_), PropertyType::Boolean) => true,
+    //         (Self::Str(_), PropertyType::Str) => true,
+    //         (Self::Dur(_), PropertyType::Duration) => true,
+    //         (Self::Arr(_), PropertyType::Array) => true,
+    //         (_,_) => false,
+    //     }
+    // }
 }
 
 fn write_string(ptr: *mut c_char, store: &RwLock<String>, version: &AtomicUsize, plugin_handle: &PluginHandle) -> bool {
@@ -638,9 +660,10 @@ impl ArrayValueContainer {
                             // object stored is in one piece.
                             // But in reality this case should be pratically impossible, we only write
                             // a single string while holding this handle, this should never go wrong
-                            "".to_string()
+                            String::new()
                         }
                     };
+                    let _ = store;
                     
                     let raw = CString::new(res).expect("string is string").into_raw();
 
@@ -1147,4 +1170,29 @@ fn u256_hex_and_back() {
     let res = U256::from_hex(h);
 
     assert_eq!(Ok(source), res);
+}
+
+pub(crate) fn compare_version_numbers(base: &[u16;3], other: &[u16;3]) -> std::cmp::Ordering {
+    fn comp(a: u16, b: u16) -> std::cmp::Ordering {
+        if a < b {
+            std::cmp::Ordering::Less
+        } else if a > b {
+            std::cmp::Ordering::Greater
+        } else {
+            std::cmp::Ordering::Equal
+        }
+    }
+    
+    let mut index = 0;
+
+    while index < 3 {
+        let res = comp(base[index], other[index]);
+
+        if res != std::cmp::Ordering::Equal {
+            return res;
+        }
+        index += 1;
+    }
+
+    std::cmp::Ordering::Equal
 }

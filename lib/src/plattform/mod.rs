@@ -1,4 +1,4 @@
-use std::{io::Write, path::PathBuf, str::FromStr};
+use std::{collections::HashMap, io::Write, path::PathBuf, str::FromStr};
 use log::{debug, error, info, warn};
 
 use clap::Parser;
@@ -35,6 +35,7 @@ const USER_CONFIG_FILE_NAME: &'static str = "Config.toml";
 const FOLDER_NAME: &'static str = "DataRace";
 
 deferred_define!(pub(crate), DEFAULT_DASHBOARD_PATH);
+deferred_define!(pub(crate), DEFAULT_PLUGIN_SETTINGS_PATH);
 
 deferred_define!(DEFAULT_MASTER_PLUGIN_LOCATIONS);
 deferred_define!(DEFAULT_USER_PLUGIN_LOCATIONS);
@@ -233,7 +234,8 @@ pub(crate) struct UserConfig {
     #[serde(default = "Vec::new")]
     plugin_locations: Vec<PathString>,
 
-    dashboards_location: PathString
+    dashboards_location: PathString,
+    plugin_settings_location: PathString
 }
 
 impl Default for UserConfig {
@@ -247,7 +249,8 @@ impl Default for UserConfig {
             web_settings_ip_whitelist: default_settings_ip_whitelist(),
 
             plugin_locations: DEFAULT_USER_PLUGIN_LOCATIONS.iter().map(|s| PathString(s.to_string())).collect(),
-            dashboards_location: PathString(DEFAULT_DASHBOARD_PATH.to_string())
+            dashboards_location: PathString(DEFAULT_DASHBOARD_PATH.to_string()),
+            plugin_settings_location: PathString(DEFAULT_PLUGIN_SETTINGS_PATH.to_string())
         }
     }
 }
@@ -415,6 +418,13 @@ pub(crate) fn read_config(init_conf: InitConfig) -> Option<(Config, bool)> {
             } else {
                 create_dashboard_folder(user.dashboards_location, &mut errors)?
             }
+        },
+        plugin_settings_location: {
+            if let Some(over) = init_conf.plugin_settings_folder {
+                create_plugin_settings_folder(over, &mut errors)?
+            } else {
+                create_plugin_settings_folder(user.plugin_settings_location, &mut errors)?
+            }
         }
     };
 
@@ -461,7 +471,15 @@ fn create_ip_matcher(disable_web_server: bool, mut ip_list: Vec<String>, mut mas
 }
 
 fn create_dashboard_folder(path : PathString, errors: &mut bool) -> Option<PathBuf> {
-    fn parse_and_create(path: PathString) -> Result<PathBuf, String> {
+    create_thing_folder(path, errors, "Dashboards", DEFAULT_DASHBOARD_PATH)
+}
+
+fn create_plugin_settings_folder(path: PathString, errors: &mut bool) -> Option<PathBuf> {
+    create_thing_folder(path, errors, "Plugin Settings", DEFAULT_PLUGIN_SETTINGS_PATH)
+}
+
+fn create_thing_folder(path: PathString, errors: &mut bool, thing: &str, fallback_for_thing: &str) -> Option<PathBuf> {
+    fn parse_and_create(path: PathString, thing: &str) -> Result<PathBuf, String> {
         let folder = PathBuf::try_from(path.clone()).map_err(|e| e.to_string())?;
         
         if !folder.is_dir() {
@@ -469,28 +487,28 @@ fn create_dashboard_folder(path : PathString, errors: &mut bool) -> Option<PathB
                 return Err("Is File (Must be a Folder)".to_string());
             }
             
-            warn!("Dashboards Folder does not exist, creating...");
+            warn!("{thing} Folder does not exist, creating...");
             std::fs::create_dir_all(folder.as_path()).map_err(|e| e.to_string())?;
         }
 
         return Ok(folder);
     }
 
-    info!("Dashboards Folder: {}", path.0.as_str());
-    match parse_and_create(path) {
+    info!("{thing} Folder: {}", path.0.as_str());
+    match parse_and_create(path, thing) {
         Ok(path) => return Some(path),
         Err(e) => {
-            error!("Failed to access the Dashboards folder: {e}");
+            error!("Failed to access the {thing} folder: {e}");
             *errors = false;
         }
     }
 
-    let fallback = PathString(DEFAULT_DASHBOARD_PATH.to_string());
-    warn!("Falling back to default Dashboard Folder: {}", fallback.0.as_str());
-    match parse_and_create(fallback) {
+    let fallback = PathString(fallback_for_thing.to_string());
+    warn!("Falling back to default {thing} Folder: {}", fallback.0.as_str());
+    match parse_and_create(fallback, thing) {
         Ok(path) => Some(path),
         Err(e) => {
-            error!("Failed to access fallback Dashboard folder: {e}");
+            error!("Failed to access fallback {thing} folder: {e}");
             None
         }
     }
@@ -516,6 +534,10 @@ struct CmdArgs {
     #[arg(long, short)]
     dashboards_folder: Option<String>,
 
+    /// Set (ignoring the value in the Config.toml) the plugins settings folder
+    #[arg(long, short)]
+    plugin_settings_folder: Option<String>,
+
     /// Print Version Information
     #[arg(short, long)]
     version: bool,
@@ -526,6 +548,7 @@ struct CmdArgs {
 pub(super) struct InitConfig {
     pub(super) log_level: log::LevelFilter,
     dashboards_folder: Option<PathString>,
+    plugin_settings_folder: Option<PathString>,
 
     #[cfg(debug_assertions)]
     local_dev: bool,
@@ -555,6 +578,7 @@ pub(super) fn read_cmd_args() -> Option<InitConfig> {
     Some(InitConfig {
         log_level: args.log_level,
         dashboards_folder: args.dashboards_folder.map(|s| PathString(s)),
+        plugin_settings_folder: args.plugin_settings_folder.map(|s| PathString(s)),
         
         #[cfg(debug_assertions)]
         local_dev: args.local_dev,
@@ -564,4 +588,10 @@ pub(super) fn read_cmd_args() -> Option<InitConfig> {
     
 }
 
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct PluginSettingsFile {
+    pub(crate) version: [u16; 3],
+    pub(crate) settings: HashMap<String, datarace_socket_spec::socket::Value>
+}
 

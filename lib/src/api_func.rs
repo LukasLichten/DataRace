@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use libc::{c_char, c_void};
-use log::{debug, error};
+use log::error;
 
-use crate::{events::EventMessage, pluginloader::LoaderMessage, utils::{self, VoidPtrWrapper}, Action, ActionHandle, ArrayValueHandle, DataStoreReturnCode, EventHandle, Message, PluginDescription, PluginHandle, PluginNameHash, Property, PropertyHandle, PropertyType, ReturnValue, API_VERSION};
+use crate::{events::EventMessage, pluginloader::LoaderMessage, utils::{self, VoidPtrWrapper}, Action, ActionHandle, ArrayValueHandle, DataStoreReturnCode, EventHandle, Message, PluginDescription, PluginHandle, PluginNameHash, PluginSettingsLoadFail, PluginSettingsLoadReturn, PluginSettingsLoadState, Property, PropertyHandle, PropertyType, ReturnValue, API_VERSION};
 
 
 macro_rules! get_handle {
@@ -13,7 +13,7 @@ macro_rules! get_handle {
         } {
             handle
         } else {
-            error!("Plugin Handle corrupted");
+            error!("PluginHandle can not be null");
             return;
         }
     };
@@ -23,7 +23,7 @@ macro_rules! get_handle {
         } {
             handle
         } else {
-            error!("Plugin Handle corrupted");
+            error!("PluginHandle can not be null");
             return $re;
         }
     };
@@ -36,8 +36,8 @@ macro_rules! get_handle_val {
         } {
             handle
         } else {
-            error!("Plugin Handle corrupted");
-            return ReturnValue::from(Err(DataStoreReturnCode::DataCorrupted));
+            error!("PluginHandle can not be null");
+            return ReturnValue::from(Err(DataStoreReturnCode::HandleNullPtr));
         }
     };
 }
@@ -77,13 +77,14 @@ macro_rules! get_string {
 /// you need to call change_property_type to change this type
 #[unsafe(no_mangle)]
 pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, prop_handle: PropertyHandle, value: Property) -> DataStoreReturnCode {
-    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
     let msg = get_string!(name, DataStoreReturnCode::ParameterCorrupted);
 
     if let Some(prop_hash) = utils::generate_property_name_hash(msg.as_str()) {
-        if prop_handle.property != prop_hash || prop_handle.plugin != han.id {
-            debug!("Create Property Failed due to name {}", msg);
+        if prop_handle.property != prop_hash {
             return DataStoreReturnCode::ParameterCorrupted;
+        } else if prop_handle.plugin != han.id {
+            return DataStoreReturnCode::NotAuthenticated;
         }
     } else {
         return DataStoreReturnCode::ParameterCorrupted;
@@ -95,13 +96,7 @@ pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, 
     }
 
     let prop_container = utils::PropertyContainer::new(msg, value, han);
-    if let Err(e) = han.sender.send(LoaderMessage::PropertyCreate(prop_handle.property, prop_container)) {
-        error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
-        return DataStoreReturnCode::DataCorrupted; // TODO new type for a not total fail error
-    }
-    
-
-    DataStoreReturnCode::Ok
+    han.sender.send(LoaderMessage::PropertyCreate(prop_handle.property, prop_container)).into()
 }
 
 /// Updates the value for the Property behind a given handle
@@ -115,7 +110,7 @@ pub extern "C" fn create_property(handle: *mut PluginHandle, name: *mut c_char, 
 /// Passing in an Array will not deallocate that pointer.
 #[unsafe(no_mangle)]
 pub extern  "C" fn update_property(handle: *mut PluginHandle, prop_handle: PropertyHandle, value: Property) -> DataStoreReturnCode {
-    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
 
     if let Some(entry) = han.properties.get(&prop_handle.property) {
         if entry.update(value, han) {
@@ -180,15 +175,10 @@ pub extern "C" fn generate_property_handle(name: *mut c_char) -> ReturnValue<Pro
 /// multiple locks and unlocks till this action is performed
 #[unsafe(no_mangle)]
 pub extern "C" fn delete_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
-    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
 
     if prop_handle.plugin == han.id && han.properties.contains_key(&prop_handle.property) {
-        if let Err(e) = han.sender.send(LoaderMessage::PropertyDelete(prop_handle.property)) {
-            error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
-            DataStoreReturnCode::DataCorrupted
-        } else {
-            DataStoreReturnCode::Ok
-        }
+        han.sender.send(LoaderMessage::PropertyDelete(prop_handle.property)).into()
     } else {
         DataStoreReturnCode::DoesNotExist
     }
@@ -201,17 +191,12 @@ pub extern "C" fn delete_property(handle: *mut PluginHandle, prop_handle: Proper
 /// multiple locks and unlocks till this action is performed
 #[unsafe(no_mangle)]
 pub extern "C" fn change_property_type(handle: *mut PluginHandle, prop_handle: PropertyHandle, value: Property) -> DataStoreReturnCode {
-    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
 
     if prop_handle.plugin == han.id && han.properties.contains_key(&prop_handle.property) {
         let cont = utils::ValueContainer::new(value, han);
 
-        if let Err(e) = han.sender.send(LoaderMessage::PropertyTypeChange(prop_handle.property, cont, true)) {
-            error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
-            DataStoreReturnCode::DataCorrupted
-        } else {
-            DataStoreReturnCode::Ok
-        }
+        han.sender.send(LoaderMessage::PropertyTypeChange(prop_handle.property, cont, true)).into()
     } else {
         DataStoreReturnCode::DoesNotExist
     }
@@ -227,16 +212,11 @@ pub extern "C" fn change_property_type(handle: *mut PluginHandle, prop_handle: P
 /// subscriptions (for which it will lock)
 #[unsafe(no_mangle)]
 pub extern "C" fn subscribe_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
-    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
 
     // TODO: Remove ability to subscribe to your own properties, as it is pointless
     
-    if let Err(e) = han.sender.send(LoaderMessage::Subscribe(prop_handle)) {
-        error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
-        DataStoreReturnCode::DataCorrupted
-    } else {
-        DataStoreReturnCode::Ok
-    }
+    han.sender.send(LoaderMessage::Subscribe(prop_handle)).into()
 }
 
 /// Removes subscription for a certain property (it will queue it)
@@ -246,18 +226,13 @@ pub extern "C" fn subscribe_property(handle: *mut PluginHandle, prop_handle: Pro
 /// multiple locks and unlocks till this action is performed
 #[unsafe(no_mangle)]
 pub extern "C" fn unsubscribe_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
-    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
 
     if !han.subscriptions.contains_key(&prop_handle) {
         return DataStoreReturnCode::DoesNotExist;
     }
     
-    if let Err(e) = han.sender.send(LoaderMessage::Unsubscribe(prop_handle)) {
-        error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
-        DataStoreReturnCode::DataCorrupted
-    } else {
-        DataStoreReturnCode::Ok
-    }
+    han.sender.send(LoaderMessage::Unsubscribe(prop_handle)).into()
 }
 
 /// Generates the EventHandle for a certain name
@@ -294,17 +269,13 @@ pub extern "C" fn generate_event_handle(name: *mut c_char) -> ReturnValue<EventH
 /// exists for any trigger calls following this function
 #[unsafe(no_mangle)]
 pub extern "C" fn create_event(handle: *mut PluginHandle, event: EventHandle) -> DataStoreReturnCode {
-    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
 
     if han.id != event.plugin {
         return DataStoreReturnCode::NotAuthenticated;
     }
 
-    if han.event_channel.send(EventMessage::Create(event)).is_ok() {
-        DataStoreReturnCode::Ok
-    } else {
-        DataStoreReturnCode::DataCorrupted
-    }
+    han.event_channel.send(EventMessage::Create(event)).into()
 }
 
 /// Deletes a Event.
@@ -317,17 +288,13 @@ pub extern "C" fn create_event(handle: *mut PluginHandle, event: EventHandle) ->
 /// will not exist for any event related calls after this function
 #[unsafe(no_mangle)]
 pub extern "C" fn delete_event(handle: *mut PluginHandle, event: EventHandle) -> DataStoreReturnCode {
-    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
 
     if han.id != event.plugin {
         return DataStoreReturnCode::NotAuthenticated;
     }
 
-    if han.event_channel.send(EventMessage::Remove(event)).is_ok() {
-        DataStoreReturnCode::Ok
-    } else {
-        DataStoreReturnCode::DataCorrupted
-    }
+    han.event_channel.send(EventMessage::Remove(event)).into()
 }
 
 /// Subscribes to an event
@@ -344,13 +311,9 @@ pub extern "C" fn delete_event(handle: *mut PluginHandle, event: EventHandle) ->
 /// will miss the first trigger.
 #[unsafe(no_mangle)]
 pub extern "C" fn subscribe_event(handle: *mut PluginHandle, event: EventHandle) -> DataStoreReturnCode {
-    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
 
-    if han.event_channel.send(EventMessage::Subscribe(event, han.id, han.sender.clone().to_async())).is_ok() {
-        DataStoreReturnCode::Ok
-    } else {
-        DataStoreReturnCode::DataCorrupted
-    }
+    han.event_channel.send(EventMessage::Subscribe(event, han.id, han.sender.clone().to_async())).into()
 }
 
 /// Unsubscribes to an event
@@ -364,13 +327,9 @@ pub extern "C" fn subscribe_event(handle: *mut PluginHandle, event: EventHandle)
 /// were subscribed).
 #[unsafe(no_mangle)]
 pub extern "C" fn unsubscribe_event(handle: *mut PluginHandle, event: EventHandle) -> DataStoreReturnCode {
-    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
 
-    if han.event_channel.send(EventMessage::Unsubscribe(event, han.id)).is_ok() {
-        DataStoreReturnCode::Ok
-    } else {
-        DataStoreReturnCode::DataCorrupted
-    }
+    han.event_channel.send(EventMessage::Unsubscribe(event, han.id)).into()
 }
 
 /// Triggers an event
@@ -381,17 +340,13 @@ pub extern "C" fn unsubscribe_event(handle: *mut PluginHandle, event: EventHandl
 /// guaranteed to not be reordered
 #[unsafe(no_mangle)]
 pub extern "C" fn trigger_event(handle: *mut PluginHandle, event: EventHandle) -> DataStoreReturnCode {
-    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
 
     if han.id != event.plugin {
         return DataStoreReturnCode::NotAuthenticated;
     }
 
-    if han.event_channel.send(EventMessage::Trigger(event)).is_ok() {
-        DataStoreReturnCode::Ok
-    } else {
-        DataStoreReturnCode::DataCorrupted
-    }
+    han.event_channel.send(EventMessage::Trigger(event)).into()
 }
 
 /// Creates a new action handle
@@ -461,7 +416,7 @@ pub extern "C" fn trigger_action(handle: *mut PluginHandle, action_handle: Actio
 /// manually (or, replace the params in the action with null prior to calling this function).
 #[unsafe(no_mangle)]
 pub extern "C" fn action_callback(handle: *mut PluginHandle, previous_action: Action, return_code: u64, params: *mut Property, param_count: usize) -> DataStoreReturnCode {
-    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
 
     let mut action = Action::new(han.id, return_code, params, param_count);
     action.id = previous_action.id;
@@ -586,7 +541,7 @@ pub extern "C" fn get_array_value(array_handle: *mut ArrayValueHandle, index: us
 /// Trying to change value in Arrayhandles from properties of other plugin will return NotAuthenticated
 #[unsafe(no_mangle)]
 pub extern "C" fn set_array_value(handle: *mut PluginHandle, array_handle: *mut ArrayValueHandle, index: usize, value: Property) -> DataStoreReturnCode {
-    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
     let arr = if let Some(arr) = unsafe {
         array_handle.as_ref()  
     } {
@@ -697,14 +652,9 @@ pub extern "C" fn drop_array_handle(array_handle: *mut ArrayValueHandle) {
 /// that they failed, so you could restart them or shut the plugin down
 #[unsafe(no_mangle)]
 pub extern "C" fn send_internal_msg(handle: *mut PluginHandle, msg_code: i64) -> DataStoreReturnCode {
-    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
 
-    if let Err(e) = han.sender.send(LoaderMessage::InternalMessage(msg_code)) {
-        error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
-        DataStoreReturnCode::DataCorrupted
-    } else {
-        DataStoreReturnCode::Ok
-    }
+    han.sender.send(LoaderMessage::InternalMessage(msg_code)).into()
 }
 
 /// Allows you to send a raw memory pointer to another plugin.  
@@ -715,14 +665,9 @@ pub extern "C" fn send_internal_msg(handle: *mut PluginHandle, msg_code: i64) ->
 /// package and understand what it stands for.
 #[unsafe(no_mangle)]
 pub extern "C" fn send_ptr_msg_to_plugin(handle: *mut PluginHandle, target: u64, ptr: *mut c_void, reason: i64) -> DataStoreReturnCode {
-    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
 
-    if let Err(e) = han.sender.send(LoaderMessage::SendPluginMessagePtr((target, VoidPtrWrapper { ptr }, reason))) {
-        error!("Failed to send message in channel for Plugin {}: {}", han.name, e);
-        DataStoreReturnCode::DataCorrupted
-    } else {
-        DataStoreReturnCode::Ok
-    }
+    han.sender.send(LoaderMessage::SendPluginMessagePtr((target, VoidPtrWrapper { ptr }, reason))).into()
 }
 
 /// Allows you to optain the id of another plugin based on it's name. 
@@ -768,7 +713,7 @@ pub extern "C" fn get_foreign_plugin_id(handle: *mut PluginHandle, name: *mut c_
 /// Do not call this in the update or init function, as this can deadlock the plugin.
 #[unsafe(no_mangle)]
 pub extern "C" fn lock_plugin(handle: *mut PluginHandle) -> DataStoreReturnCode {
-    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
 
     han.lock();
     DataStoreReturnCode::Ok
@@ -785,23 +730,235 @@ pub extern "C" fn lock_plugin(handle: *mut PluginHandle) -> DataStoreReturnCode 
 /// Also a good idea not to use in the init and update functions.
 #[unsafe(no_mangle)]
 pub extern "C" fn unlock_plugin(handle: *mut PluginHandle) -> DataStoreReturnCode {
-    let han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
 
     han.unlock();
     DataStoreReturnCode::Ok
 }
 
+/// This reloads the Plugin Settings from it's file.
+/// 
+/// Be aware that any unsaved changes will be lost, including transient Settings Properties.
+#[unsafe(no_mangle)]
+pub extern "C" fn reload_plugin_settings(handle: *mut PluginHandle) -> PluginSettingsLoadReturn {
+    let handle = get_handle!(handle,
+        PluginSettingsLoadReturn {
+            code: PluginSettingsLoadState::PslsHandleNullPtr,
+            fail: PluginSettingsLoadFail { filler: 0 }
+        });
+
+    futures_lite::future::block_on(async {
+        let mut ds_w = handle.datastore.write().await;
+        ds_w.reload_plugin_settings(handle.id).await
+    })
+}
+
+/// This saves the Plugin Settings from it's file.
+/// 
+/// Only none transiant properties are saved.
+/// Once Saved (and successfull), reload will revert to this state.
+///
+/// In case of a FileSystem Error it is unclear if a partial write occured, all other errors leave
+/// the previous saved file always intact.
+#[unsafe(no_mangle)]
+pub extern "C" fn save_plugin_settings(handle: *mut PluginHandle) -> PluginSettingsLoadState {
+    let handle = get_handle!(handle, PluginSettingsLoadState::PslsHandleNullPtr);
+
+    
+    futures_lite::future::block_on(async {
+        let ds_r = handle.datastore.read().await;
+        ds_r.save_plugin_settings(handle.id).await
+    })
+}
+
+/// This retrieves a settings property for this plugin.
+/// Settings are distinct from standard properties, they are used for the Settings Dashboard for
+/// your plugin, and to persist these between restarts. But their access is slow (Requiring the central DataStore to lock), 
+/// so you are best off reading these once and caching them.
+/// But they do use the same PropertyHandle as regular properties (without name collisions between
+/// the two types, so you can have a property and plugin setting property named the same).
+///
+/// Attempting a access a setting of another plugin will result in NotAuthenticated error.
+/// A setting needs to be created first (through create_plugin_settings_proptery, or it was in the
+/// settings file loaded on startup/through reload_plugin_settings).
+#[unsafe(no_mangle)]
+pub extern "C" fn get_plugin_settings_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> ReturnValue<Property> {
+    let handle = get_handle_val!(handle);
+
+    if prop_handle.plugin != handle.id {
+        return ReturnValue::new_from_error(DataStoreReturnCode::NotAuthenticated);
+    }
+
+    futures_lite::future::block_on(async {
+        let ds_r = handle.datastore.read().await;
+        match ds_r.get_plugin_settings_property(handle.id, prop_handle.property) {
+            Some(value) => {
+                let res = value.value.read(true);
+                ReturnValue { code: DataStoreReturnCode::Ok, value: res }
+            },
+            None => ReturnValue::new_from_error(DataStoreReturnCode::DoesNotExist)
+        }
+    })
+}
+
+/// Creates a plugin settings property.
+///
+/// Settings are distinct from standard properties, they are used for the Settings Dashboard for
+/// your plugin, and to persist these between restarts. But their access is slow (Requiring the central DataStore to lock), 
+/// so you are best off reading these once and caching them.
+/// But they do use the same PropertyHandle as regular properties.
+///
+/// Transient Settings are not persevered when the settings are saved.
+///
+/// Same as create_property, the name of your plugin will be prepended to the final name: plugin_name.name
+/// It is also your job to deallocate this name string.
+#[unsafe(no_mangle)]
+pub extern "C" fn create_plugin_settings_property(
+    handle: *mut PluginHandle, 
+    prop_handle: PropertyHandle, 
+    name: *mut c_char, 
+    value: Property,
+    transient: bool
+) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
+    let msg = get_string!(name, DataStoreReturnCode::ParameterCorrupted);
+
+    if let Some(prop_hash) = utils::generate_property_name_hash(msg.as_str()) {
+        if prop_handle.property != prop_hash {
+            return DataStoreReturnCode::ParameterCorrupted;
+        } else if prop_handle.plugin != han.id {
+            return DataStoreReturnCode::NotAuthenticated;
+        }
+    } else {
+        return DataStoreReturnCode::ParameterCorrupted;
+    }
+
+    futures_lite::future::block_on(async {
+        let mut ds_w = han.datastore.write().await;
+
+        if ds_w.get_plugin_settings_property(han.id, prop_handle.property).is_some() {
+            return DataStoreReturnCode::AlreadyExists;
+        }
+
+        let prop_container = utils::ValueContainer::new(value, &han);
+
+        ds_w.insert_plugin_settings_property(han.id, prop_handle.property, 
+            crate::datastore::PluginSettingProperty { name: msg, value: prop_container, transient }).await
+    })
+}
+
+/// This changes the value (and possibly the type) of a plugin settings property.
+///
+/// Compared to the update function for normal properties you can use this function to change type
+/// too, the only requirement is that the settings property has to exist first.
+#[unsafe(no_mangle)]
+pub extern "C" fn change_plugin_settings_property(handle: *mut PluginHandle, prop_handle: PropertyHandle, value: Property) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
+
+    if prop_handle.plugin != han.id {
+        return DataStoreReturnCode::NotAuthenticated;
+    }
+
+    futures_lite::future::block_on(async {
+        let mut ds_w = han.datastore.write().await;
+
+        match ds_w.get_plugin_settings_property(han.id, prop_handle.property) {
+            Some(setting) => {
+                // if setting.value.matching_type(&value) {
+                //     setting.value.update(value, han);
+                // } else {
+
+                // We recreate the value container
+                let transient = setting.transient;
+                let name = setting.name.clone();
+                
+                let prop_container = utils::ValueContainer::new(value, han);
+
+                ds_w.insert_plugin_settings_property(han.id, prop_handle.property, 
+                    crate::datastore::PluginSettingProperty { name, value:  prop_container, transient }).await
+
+
+                // }
+            },
+            None => DataStoreReturnCode::DoesNotExist
+        }
+    })
+}
+
+/// This deletes a plugin settings property.
+///
+/// Compared to the delete_property function for normal properties, this delete is finished upon
+/// the function returning
+#[unsafe(no_mangle)]
+pub extern "C" fn delete_plugin_settings_property(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
+
+    if prop_handle.plugin != han.id {
+        return DataStoreReturnCode::NotAuthenticated;
+    }
+
+    futures_lite::future::block_on(async {
+        let mut ds_w = han.datastore.write().await;
+
+        ds_w.remove_plugin_settings_property(han.id, prop_handle.property).await
+    })
+}
+
+/// Checks if a Plugin Settings Property is transient (aka will not be saved in the settings file).
+///
+/// This will return true also on any settings properties that do not exist, or prop handles you
+/// have no access to, so you should check if the settings property exists first via
+/// get_plugin_settings_property
+#[unsafe(no_mangle)]
+pub extern "C" fn is_plugin_settings_property_transient(handle: *mut PluginHandle, prop_handle: PropertyHandle) -> bool {
+    let han = get_handle!(handle, true);
+
+    if prop_handle.plugin != han.id {
+        return true;
+    }
+
+    futures_lite::future::block_on(async {
+        let ds_r = han.datastore.read().await;
+
+        match ds_r.get_plugin_settings_property(han.id, prop_handle.property) {
+            Some(value) => value.transient,
+            None => true
+        }
+    })
+}
+
+/// Make a plugin setting property transient (or no longer transient).
+///
+/// Transient Properties will not be saved in the Settings file, so this enables you to
+/// retroactively set a property as transient or vise versa.
+#[unsafe(no_mangle)]
+pub extern "C" fn set_plugin_settings_property_transient(handle: *mut PluginHandle, prop_handle: PropertyHandle, transient: bool) -> DataStoreReturnCode {
+    let han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
+
+
+    if prop_handle.plugin != han.id {
+        return DataStoreReturnCode::NotAuthenticated;
+    }
+
+    futures_lite::future::block_on(async {
+        let mut ds_w = han.datastore.write().await;
+
+        ds_w.set_plugin_settings_property_transient(han.id, prop_handle.property, transient)
+    })
+}
+
+
 
 /// Puts a message back into the Queue (currently not implemented)
 ///
-/// Keep in mind, if you reenque an Update message, this may result in another value update for
-/// this property coming inbetween, resulting in you progressing next the newer value before the
-/// reenqueued value
+/// Keep in mind, if you reenque any Message this will alter the order, and may result in, for
+/// example, actions being performed in a different order then triggered. 
+/// Also DataStoreLock messages can not be enqueed.
 ///
 /// Part of the point of this function is so the Message type is included in the generated header
 #[unsafe(no_mangle)]
 pub extern "C" fn reenqueue_message(handle: *mut PluginHandle, msg: Message) -> DataStoreReturnCode {
-    let _han = get_handle!(handle, DataStoreReturnCode::DataCorrupted);
+    let _han = get_handle!(handle, DataStoreReturnCode::HandleNullPtr);
     let _msg = msg;
     
     // // need to reencode Message

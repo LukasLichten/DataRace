@@ -4,6 +4,7 @@ use std::{os::unix::fs::{MetadataExt, PermissionsExt}, path::PathBuf, str::FromS
 
 
 pub(crate) const DEFAULT_DASHBOARD_PATH: &'static str = "~/.config/DataRace/Dashboards";
+pub(crate) const DEFAULT_PLUGIN_SETTINGS_PATH: &'static str = "~/.config/DataRace/PluginSettings";
 
 pub(super) fn get_master_config_path() -> Option<PathBuf> {
     PathBuf::from_str(format!("/etc/DataRace/{}",super::MASTER_CONFIG_FILE_NAME).as_str()).ok()

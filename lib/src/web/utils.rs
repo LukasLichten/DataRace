@@ -143,7 +143,13 @@ impl SocketData {
 pub(crate) enum SocketChMsg {
     AddDashboard(String),
     RmDashboard(String),
-    ChangedProperty(crate::PropertyHandle, crate::utils::ValueContainer)
+    
+    ChangedProperty(crate::PropertyHandle, crate::utils::ValueContainer),
+    
+    ChangedSettingsProperty(crate::PropertyHandle, crate::utils::ValueContainer),
+    /// Why is this a seperate signal? Because this action also deletes Properties, but we have no
+    /// clue which, so the socket has to best wipe his cache for this plugin
+    ReloadedPluginSettings(u64)
 }
 
 impl From<PropertyHandle> for WebPropertyHandle {

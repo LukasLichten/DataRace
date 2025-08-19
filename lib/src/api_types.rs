@@ -81,8 +81,64 @@ pub enum DataStoreReturnCode {
     TypeMissmatch = 5,
     NotImplemented = 6,
     ParameterCorrupted = 10, 
-    DataCorrupted = 11
 
+    InternalError = 100,
+    InternalChannelClosed = 101,
+    InternalChannelReceiverClosed = 102,
+
+    HandleNullPtr = 255,
+}
+
+impl From<Result<(), kanal::SendError>> for DataStoreReturnCode {
+    fn from(value: Result<(), kanal::SendError>) -> Self {
+        match value {
+            Ok(()) => Self::Ok,
+            Err(kanal::SendError::Closed) => Self::InternalChannelClosed,
+            Err(kanal::SendError::ReceiveClosed) => Self::InternalChannelReceiverClosed,
+        }
+    }
+}
+
+#[derive(PartialEq, Debug)]
+#[repr(u8)]
+pub enum PluginSettingsLoadState {
+    Loaded = 0,
+    NoFile = 1,
+
+    VersionOlderThenCurrent = 11,
+    VersionNewerThenCurrent = 12,
+
+    FileSystemError = 20,
+    JsonParseError = 21,
+
+    // Why is this not just HandleNullPtr? Because C can't handle two variants of the same name,
+    // even if they are in seperate enums...
+    PslsHandleNullPtr = 255,
+}
+
+/// version contains the version of the plugin that last saved the settings. Present with:
+/// - VersionOlderThenCurrent
+/// - VersionNewerThenCurrent 
+///
+/// text contains the error message for:
+/// - FileSystemError
+/// - JsonParseError
+///
+/// filler is set to 0 for the remaining codes:
+/// - Loaded
+/// - NoFile
+/// - PslsHandleNullPtr
+#[repr(C)]
+pub union PluginSettingsLoadFail {
+    pub version: [u16;3],
+    pub text: *mut libc::c_char,
+    pub filler: u8,
+}
+
+#[repr(C)]
+pub struct PluginSettingsLoadReturn {
+    pub code: PluginSettingsLoadState,
+    pub fail: PluginSettingsLoadFail
 }
 
 /// A Descriptor for the plugin, used to aquire meta data (name/version),
@@ -449,7 +505,7 @@ impl Default for ActionHandle {
 // }
 #[cfg(test)]
 mod test {
-    use crate::{Action, ActionHandle, DataStoreReturnCode, EventHandle, Message, MessagePtr, MessageType, MessageValue, PluginDescription, Property, PropertyHandle, PropertyType, PropertyValue, ReturnValue};
+    use crate::{Action, ActionHandle, DataStoreReturnCode, EventHandle, Message, MessagePtr, MessageType, MessageValue, PluginDescription, PluginSettingsLoadFail, PluginSettingsLoadReturn, Property, PropertyHandle, PropertyType, PropertyValue, ReturnValue};
 
     #[test]
     fn abi_size_check() {
@@ -477,6 +533,9 @@ mod test {
         assert_eq!(std::mem::size_of::<ReturnValue<EventHandle>>(), 24, "ReturnValue_EventHandle size missmatch");
         assert_eq!(std::mem::size_of::<ReturnValue<ActionHandle>>(), 24, "ReturnValue_ActionHandle size missmatch");
         assert_eq!(std::mem::size_of::<ReturnValue<Property>>(), 24, "ReturnValue_Property size missmatch");
+
+        assert_eq!(std::mem::size_of::<PluginSettingsLoadFail>(), 8, "PluginSettingsLoadFail size missmatch");
+        assert_eq!(std::mem::size_of::<PluginSettingsLoadReturn>(), 16, "PluginSettingsLoadReturn size missmatch");
     }
 
 }

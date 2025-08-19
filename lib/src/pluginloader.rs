@@ -5,7 +5,7 @@ use log::{error, info, debug};
 
 use tokio::task::JoinSet;
 
-use crate::{api_types, datastore::DataStore, events::EventMessage, set_errors, utils::{self, VoidPtrWrapper}, Action, DataStoreReturnCode, EventHandle, Message, MessagePtr, MessageType, MessageValue, PluginHandle, PropertyHandle};
+use crate::{api_types, datastore::DataStore, events::EventMessage, set_errors, utils::{self, VoidPtrWrapper}, Action, DataStoreReturnCode, EventHandle, Message, MessagePtr, MessageType, MessageValue, PluginHandle, PluginSettingsLoadReturn, PropertyHandle};
 
 
 struct PluginLocationIter {
@@ -177,22 +177,25 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
         drop(desc); // drop is importantent, name ptr is pointing at freed memory
 
         let mut w_store = datastore.write().await;
-        if w_store.register_plugin(id, sender.clone(), ptr_h.ptr).is_none() {
-            let name = get_plugin_name(&ptr_h);
+        let settings_load_state = match w_store.register_plugin(id, crate::datastore::PluginType::Internal { handle: ptr_h.ptr, channel: sender.to_async() }).await {
+            Some(settings_load_state) => settings_load_state,
+            None => {
+                let name = get_plugin_name(&ptr_h);
 
-            // We can drop the pointer with no risk, as nothing can access it
-            unsafe {
-                drop(Box::from_raw(ptr_h.ptr));
+                // We can drop the pointer with no risk, as nothing can access it
+                unsafe {
+                    drop(Box::from_raw(ptr_h.ptr));
+                }
+
+                if w_store.get_shutdown_status() {
+                    error!("Unable to register Plugin {}, shut down already in progress", name.as_str());
+                    return Ok(());
+                }
+
+                error!("Unable to register Plugin {} (id {}), name/id collision", name.as_str(), id);
+                return Err(name);
             }
-
-            if w_store.get_shutdown_status() {
-                error!("Unable to register Plugin {}, shut down already in progress", name.as_str());
-                return Ok(());
-            }
-
-            error!("Unable to register Plugin {} (id {}), name/id collision", name.as_str(), id);
-            return Err(name);
-        }
+        };
         drop(w_store);
 
         if let Some(han) = unsafe {
@@ -207,7 +210,7 @@ async fn run_plugin(path: PathBuf, datastore: &'static tokio::sync::RwLock<DataS
         let mut safe_shutdown = false;
 
         // Initializing
-        if wrapper.init(ptr_h.ptr) != 0 {
+        if wrapper.init(ptr_h.ptr, settings_load_state) != 0 {
             // None Zero Error Code, shut down
             let name = get_plugin_name(&ptr_h);
             error!("Plugin {} failed to initialize", name.as_str());
@@ -341,7 +344,7 @@ fn get_plugin_name(ptr: &PtrWrapper) -> String {
 pub struct PluginWrapper {
     get_plugin_description: extern "C" fn() -> api_types::PluginDescription,
     free_string: extern "C" fn(ptr: *mut libc::c_char),
-    init: extern "C" fn(handle: *mut PluginHandle) -> libc::c_int,
+    init: extern "C" fn(handle: *mut PluginHandle, plugin_settings_load_state: PluginSettingsLoadReturn) -> libc::c_int,
     update: extern "C" fn(handle: *mut PluginHandle, msg: api_types::Message) -> libc::c_int,
 }
 

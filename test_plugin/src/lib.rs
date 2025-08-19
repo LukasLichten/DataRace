@@ -1,4 +1,4 @@
-use datarace_plugin_api::{api, macros, wrappers::{ArrayHandle, DataStoreReturnCode, EventHandle, Message, PluginHandle, Property, PropertyHandle}};
+use datarace_plugin_api::{api, macros, wrappers::{ArrayHandle, DataStoreReturnCode, EventHandle, Message, PluginHandle, PluginSettingsLoadState, Property, PropertyHandle}};
 use std::{sync::atomic::{AtomicBool, AtomicU64}, time::Duration};
 
 // While you can use this test_plugin similar to the sample plugin for inspiration,
@@ -33,8 +33,14 @@ pub(crate) struct State {
     action_id: AtomicU64,
 }
 
+// Settings Handles
+const SETTING_STD: PropertyHandle = macros::generate_property_handle!("test_plugin.test");
+const SETTING_ARR: PropertyHandle = macros::generate_property_handle!("test_plugin.arr");
+const SETTING_TRANS: PropertyHandle = macros::generate_property_handle!("test_plugin.transient");
+const SETTING_INVALID: PropertyHandle = macros::generate_property_handle!("invalid.invalid");
+
 #[datarace_plugin_api::macros::plugin_init]
-fn handle_init(handle: PluginHandle) -> Result<PluginState,String> {
+fn handle_init(handle: PluginHandle, loadstate: PluginSettingsLoadState) -> Result<PluginState,String> {
     handle.log_info("Start Init");
     let prop_name = " test_plugIn.Test ";
 
@@ -106,6 +112,60 @@ fn handle_init(handle: PluginHandle) -> Result<PluginState,String> {
 
     handle.log_info("Event creation successfully triggered");
 
+    // Plugin Settings test
+    match loadstate {
+        PluginSettingsLoadState::NoFile => {
+            handle.log_info("No PluginSettings exists for this plugin, we will create one");
+            let res = handle.save_plugin_settings();
+
+            if !matches!(res, PluginSettingsLoadState::Loaded) {
+                handle.log_error(format!("Failed to save initial PluginSettings: {}", res.to_string()));
+            }
+        },
+        PluginSettingsLoadState::Loaded => {
+            handle.log_info("PluginSettings loaded for this plugin, testing is values are present...");
+            
+            let res = std::panic::catch_unwind(|| {
+                assert_eq!(handle.get_plugin_settings_property(SETTING_STD), Ok(Property::Int(-34)), "SETTING_STD loaded incorrectly");
+                match handle.get_plugin_settings_property(SETTING_ARR) {
+                    Ok(Property::Array(arr)) => {
+                        assert_eq!(arr.get(0), Some(Property::from("Tester")), "SETTING_ARR index 0 missmatch");
+                        assert_eq!(arr.get(1), Some(Property::from("Array")), "SETTING_ARR index 1 missmatch");
+
+                        assert_eq!(arr.len(), 2, "SETTING_ARR size missmatch");
+
+                    },
+                    Err(e) => panic!("Reading SETTING_ARR returned an error {e}"),
+                    Ok(v) => panic!("SETTING_ARR value incorrect {:?}", v)
+                }
+                assert_eq!(handle.get_plugin_settings_property(SETTING_TRANS), Err(DataStoreReturnCode::DoesNotExist), "SETTING_TRANS should not exist");
+            });
+            match res {
+                Ok(_) => (),
+                Err(_) => {
+                    handle.log_error("Settings test failed, continuing Tests...");
+                }
+            }
+        },
+        PluginSettingsLoadState::FromOlderVersion(v) => {
+            handle.log_error(format!("Loaded PluginSettings, the test plugin has been updated, previous version was {}.{}.{}", v[0], v[1], v[2]));
+        },
+        PluginSettingsLoadState::FromNewerVersion(v) => {
+            handle.log_error(format!("Loaded PluginSettings, the test plugin has been downgraded, previous version was {}.{}.{}", v[0], v[1], v[2]));
+        },
+        PluginSettingsLoadState::FsError(e) => {
+            handle.log_error(format!("Failed to load PluginSettings due to File System Error: {e}"));
+        },
+        PluginSettingsLoadState::JsonParseError(e) => {
+            handle.log_error(format!("Failed to load PluginSettings due to Json Parsing Error: {e}"));
+        },
+        PluginSettingsLoadState::Unknown => {
+            panic!("PluginSettings failed to load due to a unknown error");
+        }
+    }
+
+    handle.log_info("Plugin Successfully Initiated");
+
     // Returning Ok, in this case with our state. As we didn't create it earlier, we create it here
     Ok(State { startup_complete: AtomicBool::new(false), array_handle: arr_clone, action_id: AtomicU64::new(u64::MAX) })
     // Ok(())
@@ -118,6 +178,130 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
         Message::StartupFinished => {
             handle.log_info("Startup finished, beginning runtime tests");
 
+            handle.log_info("Beginning Settings Test...");
+            let settings_time = std::time::Instant::now();
+            match handle.create_plugin_settings_property("test", SETTING_STD, Property::Float(2.5), false) {
+                DataStoreReturnCode::Ok => (),
+                DataStoreReturnCode::AlreadyExists => {
+                    assert_eq!(handle.change_plugin_settings_property(SETTING_STD, Property::Float(2.5)), DataStoreReturnCode::Ok, "SETTING_STD already exists, and rewrite failed");
+                },
+                _ => panic!("Failed to create SETTING_STD")
+            };
+            assert_eq!(handle.get_plugin_settings_property(SETTING_STD), Ok(Property::Float(2.5)), "SETTING_STD did not get properly created");
+            assert_eq!(handle.is_plugin_settings_property_transient(SETTING_STD), Some(false), "SETTING_STD should not be transient");
+
+            if handle.get_plugin_settings_property(SETTING_TRANS).is_ok() {
+                handle.log_error("SETTING_TRANS should not exist, but we are deleting it and continuing");
+                assert_eq!(handle.delete_plugin_settings_property(SETTING_TRANS), DataStoreReturnCode::Ok, "Rouge SETTING_TRANS could not be deleted");
+            }
+
+            assert_eq!(handle.create_plugin_settings_property("transient", SETTING_TRANS, Property::Bool(false), true), DataStoreReturnCode::Ok, "Transient Property not created properly");
+            assert_eq!(handle.is_plugin_settings_property_transient(SETTING_TRANS), Some(true), "SETTING_TRANS should be transient");
+
+            let array = ArrayHandle::new(&handle, Property::from(""), 2).unwrap();
+            assert_eq!(array.set(&handle, 0, Property::from("Tester")), DataStoreReturnCode::Ok, "Failed to set SETTING_ARR index 0");
+            match handle.create_plugin_settings_property("arr", SETTING_ARR, Property::Array(array.clone()), false) {
+                DataStoreReturnCode::Ok => (),
+                DataStoreReturnCode::AlreadyExists => {
+                    assert_eq!(handle.change_plugin_settings_property(SETTING_ARR, Property::Array(array.clone())), DataStoreReturnCode::Ok, "SETTING_ARR already exists, and rewrite failed");
+                },
+                _ => panic!("Failed to create SETTING_ARR")
+            };
+            assert_eq!(handle.is_plugin_settings_property_transient(SETTING_ARR), Some(false), "SETTING_ARR should not be transient");
+
+            assert_eq!(handle.create_plugin_settings_property("invalid", SETTING_INVALID, Property::None, false), DataStoreReturnCode::NotAuthenticated, "Creating the invalid setting should fail");
+            assert_eq!(handle.change_plugin_settings_property(SETTING_INVALID, Property::None), DataStoreReturnCode::NotAuthenticated, "Changing the invalid setting should fail");
+
+            // array.set(&handle, 1, Property::from("Array"));
+
+            handle.log_info("Settings Created, Performing Read...");
+            assert_eq!(handle.get_plugin_settings_property(SETTING_STD), Ok(Property::Float(2.5)), "SETTING_STD read missmatch");
+            assert_eq!(handle.get_plugin_settings_property(SETTING_TRANS), Ok(Property::Bool(false)), "SETTING_TRANS read missmatch");
+            match handle.get_plugin_settings_property(SETTING_ARR) {
+                Ok(Property::Array(arr)) => {
+                    assert_eq!(arr.len(), 2, "SETTING_ARR size missmatch");
+                    assert_eq!(arr.get(0), Some(Property::from("Tester")), "SETTING_ARR index 0 missmatch");
+                    assert_eq!(arr.get(1), Some(Property::from("")), "SETTING_ARR index 1 missmatch");
+                },
+                Ok(e) => panic!("SETTING_ARR expected Array, got: {:?}", e),
+                Err(e) => panic!("SETTING_ARR expected Array, got error: {}", e.to_string())
+            }
+            assert_eq!(handle.get_plugin_settings_property(SETTING_INVALID), Err(DataStoreReturnCode::NotAuthenticated), "Reading the invalid setting should fail");
+            assert_eq!(handle.is_plugin_settings_property_transient(SETTING_INVALID), None, "Reading transience of the inalid setting should return none");
+
+            handle.log_info("Settings Save and Reload test...");
+            assert_eq!(handle.save_plugin_settings(), PluginSettingsLoadState::Loaded, "Unable to save settings");
+
+            assert_eq!(array.set(&handle, 1, Property::from("Array")), DataStoreReturnCode::Ok, "Failed to set SETTING_ARR index 1");
+            match handle.get_plugin_settings_property(SETTING_ARR) {
+                Ok(Property::Array(arr)) => {
+                    assert_eq!(arr.len(), 2, "SETTING_ARR size missmatch");
+                    assert_eq!(arr.get(0), Some(Property::from("Tester")), "SETTING_ARR index 0 missmatch");
+                    assert_eq!(arr.get(1), Some(Property::from("Array")), "SETTING_ARR index 1 missmatch");
+                },
+                Ok(e) => panic!("SETTING_ARR expected Array, got: {:?}", e),
+                Err(e) => panic!("SETTING_ARR expected Array, got error: {}", e.to_string())
+            }
+
+            assert_eq!(handle.get_plugin_settings_property(SETTING_TRANS), Ok(Property::Bool(false)), "SETTING_TRANS re-read missmatch");
+            assert_eq!(handle.change_plugin_settings_property(SETTING_TRANS, Property::Bool(true)), DataStoreReturnCode::Ok, "SETTING_TRANS change failed");
+            assert_eq!(handle.get_plugin_settings_property(SETTING_TRANS), Ok(Property::Bool(true)), "SETTING_TRANS read-read-write-read missmatch");
+
+            assert_eq!(handle.reload_plugin_settings(), PluginSettingsLoadState::Loaded, "Settings reload failed");
+
+            assert_eq!(handle.get_plugin_settings_property(SETTING_TRANS), Err(DataStoreReturnCode::DoesNotExist), "SETTING_TRANS should not be available");
+            assert_eq!(handle.is_plugin_settings_property_transient(SETTING_TRANS), None, "SETTING_TRANS transience check after reload should return none");
+
+            match handle.get_plugin_settings_property(SETTING_ARR) {
+                Ok(Property::Array(arr)) => {
+                    assert_eq!(arr.len(), 2, "SETTING_ARR size missmatch post reload");
+                    assert_eq!(arr.get(0), Some(Property::from("Tester")), "SETTING_ARR index 0 missmatch post reload");
+                    assert_eq!(arr.get(1), Some(Property::from("")), "SETTING_ARR index 1 missmatch post reload");
+
+                    assert_eq!(array.set(&handle, 1, Property::from("Unreachable")), DataStoreReturnCode::Ok, "Despite the write going to nowhere, this should still work");
+                    assert_eq!(arr.get(1), Some(Property::from("")), "SETTING_ARR index 1 should remain unchanged");
+
+                    assert_eq!(arr.set(&handle, 1, Property::from("Array")), DataStoreReturnCode::Ok, "SETTING_ARR final write to index 1 failed");
+                    assert_eq!(arr.get(1), Some(Property::from("Array")), "SETTING_ARR index 1 missmatch post final write");
+                },
+                Ok(e) => panic!("SETTING_ARR expected Array post reload, got: {:?}", e),
+                Err(e) => panic!("SETTING_ARR expected Array post reload, got error: {}", e.to_string())
+            }
+            assert_eq!(handle.is_plugin_settings_property_transient(SETTING_ARR), Some(false), "SETTING_ARR should not be transient");
+
+            assert_eq!(handle.get_plugin_settings_property(SETTING_STD), Ok(Property::Float(2.5)), "SETTING_STD value missmatched after reload");
+            assert_eq!(handle.is_plugin_settings_property_transient(SETTING_STD), Some(false), "SETTING_STD should not be transient");
+
+            handle.log_info("Settings final checks...");
+            assert_eq!(handle.delete_plugin_settings_property(SETTING_STD), DataStoreReturnCode::Ok, "SETTING_STD delete failed");
+            assert_eq!(handle.create_plugin_settings_property("test", SETTING_STD, Property::Int(-34), true), DataStoreReturnCode::Ok, "SETTING_STD recreation should not fail");
+            assert_eq!(handle.set_plugin_settings_property_transient(SETTING_STD, false), DataStoreReturnCode::Ok, "Set SETTING_STD Not Transient should not have failed");
+            assert_eq!(handle.is_plugin_settings_property_transient(SETTING_STD), Some(false), "SETTING_STD should not be transient");
+
+            assert_eq!(handle.create_plugin_settings_property("transient", SETTING_TRANS, Property::None, false), DataStoreReturnCode::Ok, "Transient Property not re-created properly");
+            assert_eq!(handle.set_plugin_settings_property_transient(SETTING_TRANS, true), DataStoreReturnCode::Ok, "Set Setting Transient should not have failed");
+            assert_eq!(handle.is_plugin_settings_property_transient(SETTING_TRANS), Some(true), "SETTING_TRANS should be transient");
+
+            assert_eq!(handle.save_plugin_settings(), PluginSettingsLoadState::Loaded, "Settings 2nd save should not fail");
+            assert_eq!(handle.reload_plugin_settings(), PluginSettingsLoadState::Loaded, "Settings 2nd reload should not fail");
+
+            assert_eq!(handle.get_plugin_settings_property(SETTING_STD), Ok(Property::Int(-34)), "SETTING_STD loaded incorrectly");
+            match handle.get_plugin_settings_property(SETTING_ARR) {
+                Ok(Property::Array(arr)) => {
+                    assert_eq!(arr.get(0), Some(Property::from("Tester")), "SETTING_ARR index 0 missmatch");
+                    assert_eq!(arr.get(1), Some(Property::from("Array")), "SETTING_ARR index 1 missmatch");
+
+                    assert_eq!(arr.len(), 2, "SETTING_ARR size missmatch");
+
+                },
+                Err(e) => panic!("Reading SETTING_ARR returned an error {e}"),
+                Ok(v) => panic!("SETTING_ARR value incorrect {:?}", v)
+            }
+            assert_eq!(handle.get_plugin_settings_property(SETTING_TRANS), Err(DataStoreReturnCode::DoesNotExist), "SETTING_TRANS should not exist");
+
+            handle.log_info(format!("Settings test successful, time: {}us", (std::time::Instant::now() - settings_time).as_micros()));
+
+            handle.log_info("Performing Property tests...");
             assert_eq!(handle.get_property_value(UNFINISHED_TEST), Ok(Property::Int(8)), "Unfinished Test should have been on the initial value");
 
             assert_eq!(handle.get_property_value(GEN_PROP_HANDLE), Ok(Property::from("Macros Rock!")), "GEN_PROP_HANDLE initial value missmatch");
@@ -188,7 +372,7 @@ fn handle_update(handle: PluginHandle, msg: Message) -> Result<(), String> {
             assert!(handle.change_property_type(TEST_VISIBLE, Property::Int(2)).is_ok(), "TEST_VISIBLE type change failed");
             
             let arr_handle = ArrayHandle::new(&handle, Property::Float(5.4), 5).ok_or("Failed to create ArrayHandle".to_string())?;
-            assert_eq!(handle.update_property(GEN_ARRAY_HANDLE, Property::Array(arr_handle.clone())), DataStoreReturnCode::TypeMissmatch, "Updating array via update_propert must fail");
+            assert_eq!(handle.update_property(GEN_ARRAY_HANDLE, Property::Array(arr_handle.clone())), DataStoreReturnCode::TypeMissmatch, "Updating array via update_property must fail");
             assert!(handle.change_property_type(GEN_ARRAY_HANDLE, Property::Array(arr_handle)).is_ok(), "GEN_ARRAY_HANDLE type change failed");
 
             handle.log_info("Type Change Triggered Successfully");

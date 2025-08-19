@@ -4,7 +4,7 @@ use datastore::Config;
 use log::{info, error, debug};
 use tokio::runtime::Builder;
 
-pub(crate) const API_VERSION: u64 = 0;
+pub(crate) const API_VERSION: u64 = 1;
 
 mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));

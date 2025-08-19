@@ -7,7 +7,8 @@ mod genators;
 
 /// Add this the function you want to handle the plugin init.  
 /// 
-/// This function requires to take the PluginHandle as parameter,
+/// This function requires to take the PluginHandle as parameter (optionally
+/// PluginSettingsLoadState as second paramater),
 /// return type has to be Result<PluginState, String> or Result<(), String>.  
 ///   
 /// Result<PluginState,String> means the state will be saved in the handle after return Ok.
@@ -19,6 +20,11 @@ mod genators;
 /// String is not a requirement, but the Err type must implement ToString (this may change in the
 /// future, requiering a specific type).  
 /// If you return Err the plugin is considered failed and will be shut down.  
+///
+/// Adding a second parameter of type PluginSettingsLoadState is useful for when you make use of
+/// the Plugin Settings, so you know if the settings got loaded correctly, to generate new settings
+/// for the first load, or migrate from an older/newer version.
+/// But it remains optional.
 ///   
 /// The function can not be async or ffi-abi, but can be unsafe. Visibility keywords (like pub) will be
 /// ignored, the function will be internal to the generated `extern "C" fn init`
@@ -108,6 +114,8 @@ impl Parse for DescriptorTokens {
     }
 }
 
+const SUPPORTED_API: u64 = 1;
+
 /// Generates the get_plugin_description function REQUIERED for your plugin
 ///
 /// Pass in the name of your plugin, version major, version minor, version patch
@@ -130,6 +138,22 @@ pub fn plugin_descriptor_fn(input: TokenStream) -> TokenStream {
     let api_version = unsafe {
         datarace_plugin_api_sys::compiletime_get_api_version()
     };
+
+    match api_version {
+        0 => {
+            let err = LitStr::new(format!("DataRace library too old (Api Version: {api_version}), update your System to a Version with Api Version {SUPPORTED_API} (recommended) or downgrade the version of this crate (not recommended)").as_str(), plugin_name.span());
+            return quote_spanned! {
+                plugin_name.span() => compile_error!(#err)
+            }.into_token_stream().into();
+        },
+        1 => (),
+        _ => {
+            let err = LitStr::new(format!("DataRace library on your System (Api Version: {api_version}) is not supported by this crate (Api Version: {SUPPORTED_API}), please update this crate to the newest version").as_str(), plugin_name.span());
+            return quote_spanned! {
+                plugin_name.span() => compile_error!(#err)
+            }.into_token_stream().into();
+        }
+    }
 
     let plugin_name_str = plugin_name.value();
     let id = unsafe {

@@ -1,6 +1,7 @@
 use std::{fs::Permissions, path::PathBuf};
 
 pub(crate) const DEFAULT_DASHBOARD_PATH: &'static str = "~\\AppData\\Roaming\\DataRace\\Dashboards";
+pub(crate) const DEFAULT_PLUGIN_SETTINGS_PATH: &'static str = "~\\AppData\\Roaming\\DataRace\\PluginSettings";
 
 pub(super) fn get_master_config_path() -> Option<PathBuf> {
     let mut folder = get_install_folder()?;
