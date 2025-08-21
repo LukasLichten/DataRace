@@ -102,9 +102,37 @@ impl PropertyContainer {
     }
 }
 
-// Temporary function till implementation of AtomicF64
-fn new_atomicf64(value: f64) -> AtomicU64 {
-    AtomicU64::new(u64::from_be_bytes(value.to_be_bytes()))
+/// Custom Atomic Float 64 implementation,
+/// allowing us to store and load f64 numbers
+#[derive(Debug)]
+pub(crate) struct AtomicF64(AtomicU64);
+
+impl AtomicF64 {
+    pub fn new(value: f64) -> Self {
+        Self(AtomicU64::new(Self::convert_into(value)))
+    }
+
+    pub fn store(&self, value: f64, ordering: Ordering) {
+        self.0.store(Self::convert_into(value), ordering);
+    }
+
+    pub fn load(&self, ordering: Ordering) -> f64 {
+        Self::convert_back(self.0.load(ordering))
+    }
+
+    fn convert_into(value: f64) -> u64 {
+        u64::from_ne_bytes(value.to_ne_bytes())
+    }
+
+    fn convert_back(value: u64) -> f64 {
+        f64::from_ne_bytes(value.to_ne_bytes())
+    }
+}
+
+impl Default for AtomicF64 {
+    fn default() -> Self {
+        Self::new(0.0)
+    }
 }
 
 
@@ -112,7 +140,7 @@ fn new_atomicf64(value: f64) -> AtomicU64 {
 pub(crate) enum ValueContainer {
     None,
     Int(Arc<AtomicI64>),
-    Float(Arc<AtomicU64>),
+    Float(Arc<AtomicF64>),
     Bool(Arc<AtomicBool>),
     Str(Arc<(RwLock<String>,AtomicUsize)>),
     Dur(Arc<AtomicI64>),
@@ -168,7 +196,7 @@ impl ValueContainer {
         Some(match val {
             Value::None => ValueContainer::None,
             Value::Int(i) => ValueContainer::Int(Arc::new(AtomicI64::new(i))),
-            Value::Float(f) => ValueContainer::Float(Arc::new(new_atomicf64(f))),
+            Value::Float(f) => ValueContainer::Float(Arc::new(AtomicF64::new(f))),
             Value::Bool(b) => ValueContainer::Bool(Arc::new(AtomicBool::new(b))),
             Value::Str(s) => ValueContainer::Str(Arc::new((RwLock::new(s), AtomicUsize::new(1)))),
             Value::Dur(d) => ValueContainer::Dur(Arc::new(AtomicI64::new(d))),
@@ -188,8 +216,7 @@ impl ValueContainer {
             },
             (PropertyType::Float, ValueContainer::Float(at)) => {
                 let f = unsafe { val.value.decimal };
-                let conv = u64::from_be_bytes(f.to_be_bytes());
-                at.store(conv, SAVE_ORDERING);
+                at.store(f, SAVE_ORDERING);
                 true
             },
             (PropertyType::Boolean, ValueContainer::Bool(at)) => {
@@ -277,10 +304,7 @@ impl ValueContainer {
             },
             ValueContainer::Float(at) => Property {
                 sort: PropertyType::Float,
-                value: {
-                    let conv = at.load(READ_ORDERING);
-                    PropertyValue { decimal: f64::from_be_bytes(conv.to_be_bytes()) }
-                }
+                value: PropertyValue { decimal: at.load(READ_ORDERING) }
             },
             ValueContainer::Bool(at) => Property {
                 sort: PropertyType::Boolean,
@@ -334,7 +358,7 @@ impl ValueContainer {
         let val = match self {
             ValueContainer::None => Value::None,
             ValueContainer::Int(at) => Value::Int(at.load(READ_ORDERING)),
-            ValueContainer::Float(at) => Value::Float(f64::from_be_bytes(at.load(READ_ORDERING).to_be_bytes())),
+            ValueContainer::Float(at) => Value::Float(at.load(READ_ORDERING)),
             ValueContainer::Bool(at) => Value::Bool(at.load(READ_ORDERING)),
             ValueContainer::Str(arc) => {
                 let (store, index) = (&arc.0, arc.1.load(Ordering::Acquire));
@@ -444,7 +468,7 @@ fn write_string(ptr: *mut c_char, store: &RwLock<String>, version: &AtomicUsize,
 #[derive(Debug)]
 pub(crate) enum ArrayValueContainer {
     Int(Box<[AtomicI64]>),
-    Float(Box<[AtomicU64]>),
+    Float(Box<[AtomicF64]>),
     Bool(Box<[AtomicBool]>),
     Str(Box<[(RwLock<String>, AtomicUsize)]>),
     Dur(Box<[AtomicI64]>),
@@ -545,11 +569,11 @@ impl ArrayValueContainer {
                 ArrayValueContainer::Int(array_create!(val, size, AtomicI64))
             },
             PropertyType::Float => {
-                let val = u64::from_be_bytes(unsafe {
+                let val = unsafe {
                     init.value.decimal
-                }.to_be_bytes());
+                };
 
-                ArrayValueContainer::Float(array_create!(val, size, AtomicU64))
+                ArrayValueContainer::Float(array_create!(val, size, AtomicF64))
             },
             PropertyType::Boolean => {
                 let val = unsafe {
@@ -601,17 +625,7 @@ impl ArrayValueContainer {
                 Self::Int(array_create_web!(list, Int, AtomicI64))
             },
             Value::Float(_) => {
-                let mut v = Vec::<AtomicU64>::with_capacity(list.len());
-
-                for item in list {
-                    if let Value::Float(i) = item {
-                        v.push(AtomicU64::new(u64::from_be_bytes(i.to_be_bytes())));
-                    } else {
-                        return None;
-                    }
-                }
-
-                Self::Float(v.into_boxed_slice())
+                Self::Float(array_create_web!(list, Float, AtomicF64))
             },
             Value::Bool(_) => {
                 Self::Bool(array_create_web!(list, Bool, AtomicBool))
@@ -642,7 +656,7 @@ impl ArrayValueContainer {
                 Property { sort: PropertyType::Int, value: PropertyValue { integer: array_read!(arc, index) } }
             },
             Self::Float(arc) => {
-                Property { sort: PropertyType::Float, value: PropertyValue { decimal: f64::from_be_bytes(array_read!(arc, index).to_be_bytes())  } }
+                Property { sort: PropertyType::Float, value: PropertyValue { decimal: array_read!(arc, index) } }
             },
             Self::Bool(arc) => {
                 Property { sort: PropertyType::Boolean, value: PropertyValue { boolean: array_read!(arc, index) } }
@@ -709,26 +723,7 @@ impl ArrayValueContainer {
 
         match self {
             Self::Int(arr) => { web_read_value!(arr, changes, cache_arr, Int); },
-            Self::Float(arr) => {
-                let mut index = 0;
-                while let Some(at) = arr.get(index) {
-                    let value = at.load(READ_ORDERING);
-
-                    let value = f64::from_be_bytes(value.to_be_bytes());
-                    if let Some(Value::Float(old)) = cache_arr.get_mut(index) {
-                        if *old != value {
-                            *old = value;
-
-                            changes.push((index, Value::Float(value)));
-                        }
-                    } else {
-                        changes.push((index, Value::Float(value)));
-                        cache_arr.insert(index, Value::Float(value));
-                    }
-
-                    index += 1;
-                }
-            },
+            Self::Float(arr) => { web_read_value!(arr, changes, cache_arr, Float); },
             Self::Dur(arr) => { web_read_value!(arr, changes, cache_arr, Dur); },
             Self::Bool(arr) => { web_read_value!(arr, changes, cache_arr, Bool); },
             Self::Str(arr) => {
@@ -815,7 +810,7 @@ impl ArrayValueContainer {
                 array_write!(arc, index, val)
             },
             (Self::Float(arc),PropertyType::Float) => {
-                let val = u64::from_be_bytes(unsafe { value.value.decimal }.to_be_bytes());
+                let val = unsafe { value.value.decimal };
                 array_write!(arc, index, val)
             },
             (Self::Bool(arc),PropertyType::Boolean) => {
