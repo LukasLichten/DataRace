@@ -510,6 +510,7 @@ impl Plugin {
         
         let res = serde_json::to_vec_pretty(&data).map_err(|_| PluginSettingsLoadState::JsonParseError)?;
         writer.write_all(res.as_slice()).await.map_err(|_| PluginSettingsLoadState::FileSystemError)?;
+        writer.flush().await.map_err(|_| PluginSettingsLoadState::FileSystemError)?;
 
         Ok(())
     }

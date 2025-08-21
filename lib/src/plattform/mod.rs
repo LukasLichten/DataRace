@@ -62,6 +62,7 @@ pub(crate) fn default_master_config() {
 
         let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(path.as_path()).ok()?;
         file.write_all(config.as_bytes()).ok()?;
+        file.flush().ok()?;
         drop(file);
 
         set_restricted_permissions(&path)?;
@@ -337,7 +338,8 @@ pub(crate) fn write_user_config(config: &UserConfig) -> Result<(), String> {
     let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(path.as_path()).map_err(|e| e.to_string())?;
     let output = toml::to_string_pretty(&config).map_err(|e| e.to_string())?;
 
-    file.write_all(output.as_bytes()).map_err(|e| e.to_string())
+    file.write_all(output.as_bytes()).map_err(|e| e.to_string())?;
+    file.flush().map_err(|e| e.to_string())
 }
 
 /// Returns a Config most of the time, even if errors are noted with the boolean being true
